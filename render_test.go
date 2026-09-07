@@ -9,7 +9,7 @@ import (
 
 func TestRenderTextAndLimits(t *testing.T) {
 	chunks := renderChunks("A <B>", false, "hello <&>\nworld", 4096)
-	if len(chunks) != 1 || chunks[0] != "<b>A &lt;B&gt;</b>:\n\nhello &lt;&amp;&gt;\nworld\n\nотправлено через vk2tg" {
+	if len(chunks) != 1 || chunks[0] != "<b>A &lt;B&gt;</b>\n\nhello &lt;&amp;&gt;\nworld\n\nотправлено через vk2tg" {
 		t.Fatalf("unexpected render: %q", chunks)
 	}
 	body := strings.Repeat("<&😀\n", 1600)
@@ -26,7 +26,7 @@ func TestRenderTextAndLimits(t *testing.T) {
 		}
 		content := strings.TrimSuffix(plain, "\n\n"+relayFooter)
 		if index == 0 {
-			content = strings.TrimPrefix(content, "A (репост):\n\n")
+			content = strings.TrimPrefix(content, "A (репост)\n\n")
 		}
 		recovered.WriteString(content)
 	}

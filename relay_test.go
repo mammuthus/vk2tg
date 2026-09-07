@@ -67,7 +67,7 @@ func TestRelayEndToEnd(t *testing.T) {
 					var payload struct {
 						Text string `json:"text"`
 					}
-					if json.NewDecoder(request.Body).Decode(&payload) != nil || payload.Text != "<b>A &lt;B&gt; User</b>:\n\nhello &lt;&amp;&gt;\n\nотправлено через vk2tg" {
+					if json.NewDecoder(request.Body).Decode(&payload) != nil || payload.Text != "<b>A &lt;B&gt; User</b>\n\nhello &lt;&amp;&gt;\n\nотправлено через vk2tg" {
 						t.Error("incorrect relayed text")
 					}
 					writeTelegramSuccess(t, writer, request)
@@ -278,7 +278,7 @@ func TestRelayWallPhoto(t *testing.T) {
 			}
 			defer request.MultipartForm.RemoveAll()
 			caption := request.FormValue("caption")
-			if !strings.HasPrefix(caption, "<b>Sender</b> (репост):") || !strings.Contains(caption, "wall &lt;text&gt;\nsecond line") || !strings.Contains(caption, "https://vk.com/wall-42_7") || !strings.HasSuffix(caption, relayFooter) {
+			if !strings.HasPrefix(caption, "<b>Sender</b> (репост)\n\n") || !strings.Contains(caption, "wall &lt;text&gt;\nsecond line") || !strings.Contains(caption, "https://vk.com/wall-42_7") || !strings.HasSuffix(caption, relayFooter) {
 				t.Error("incorrect wall caption")
 			}
 			writeTelegramSuccess(t, writer, request)

@@ -130,9 +130,9 @@ func renderChunks(name string, repost bool, text string, firstLimit int) []strin
 	if name == "" {
 		name = "VK sender"
 	}
-	suffix := ":\n\n"
+	suffix := "\n\n"
 	if repost {
-		suffix = " (репост):\n\n"
+		suffix = " (репост)\n\n"
 	}
 	header := "<b>" + html.EscapeString(name) + "</b>" + suffix
 	headerLength := utf16Length(name + suffix)

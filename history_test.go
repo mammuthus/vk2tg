@@ -115,7 +115,7 @@ func TestHistoryMediaPipeline(t *testing.T) {
 					} else if !strings.HasSuffix(caption, relayFooter) {
 						t.Error("missing history footer")
 					}
-					if method == "sendPhoto" && (!strings.Contains(caption, "<b>Sender</b> (репост):") || !strings.Contains(caption, "wall &lt;text&gt;\nnext line") || !strings.Contains(caption, "https://vk.com/wall-42_9")) {
+					if method == "sendPhoto" && (!strings.Contains(caption, "<b>Sender</b> (репост)\n\n") || !strings.Contains(caption, "wall &lt;text&gt;\nnext line") || !strings.Contains(caption, "https://vk.com/wall-42_9")) {
 						t.Error("history bypasses wall renderer")
 					}
 					for _, files := range request.MultipartForm.File {

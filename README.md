@@ -125,8 +125,8 @@ real API calls. No automatic CAPTCHA/validation handling exists.
 
 ## Text And Attachments
 
-Ordinary text starts with `<b>Sender name</b>:`; wall reposts use
-`<b>Sender name</b> (репост):`. Sender and user text are HTML-escaped and line
+Ordinary text starts with `<b>Sender name</b>`; wall reposts use
+`<b>Sender name</b> (репост)`. Sender and user text are HTML-escaped and line
 breaks are preserved. Wall text, a public `https://vk.com/wallOWNER_ID_POST_ID`
 link when IDs exist, nested attachments and `copy_history` are retained. An
 otherwise empty wall gets `📰 Запись на стене`; source labels are not fetched.
