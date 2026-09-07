@@ -3,12 +3,44 @@
 A standalone Go service for a one-way VK -> Telegram relay.
 Repository: https://github.com/mammuthus/vk2tg
 
-**Development-only.** The Python [vk2telegram](https://github.com/mammuthus/vk2telegram)
-remains the production baseline. VK is read-only and Telegram is destination-only.
-This first stage only validates configuration, logs startup, and waits for
-SIGINT/SIGTERM. It does not contact VK, Telegram, or a database, even with
-`DRY_RUN=false`. A read-only VK HTTP client is available but is not called by
-the bootstrap. No forwarding, Long Poll loop, Docker, or metrics exist yet.
+The Python [vk2telegram](https://github.com/mammuthus/vk2telegram) remains the
+production baseline. This minimal relay can run alongside it with the same VK
+account/peer and Telegram bot/channel. VK is strictly read-only; Telegram is
+outbound-only. Neither relay consumes updates on behalf of the other, and this
+service never marks messages as read. Running both intentionally produces two
+deliveries of new messages; every message from this service ends with a separate
+line: `отправлено через vk2tg`.
+
+`DRY_RUN=true` is the default: VK Long Poll, filtering and normalization run, but
+Telegram requests and media downloads do not. Explicit `DRY_RUN=false` enables
+delivery. There is no database, metrics server, Telegram polling, or reverse relay.
+
+## Relay Loop
+
+The sequential loop acquires a fresh Long Poll cursor on startup and processes
+only new message events (type 4, user Long Poll version 3, mode 2). It does not
+load history. The event provides message ID at index 1, flags at 2, peer at 3,
+text at 5, extra fields at 6 and attachment hints at 7. The outbox bit is `2`.
+Sender ID comes from `extra.from`, or the peer for a direct inbound user message.
+Unknown chat senders and service events are ignored. Peer, outbox and the sender
+blocklist are checked before metadata requests or attachment processing.
+
+Plain text events require no `messages.getById`. Attachment, forward or reply
+hints trigger that read-only call to obtain the full text and attachments, and
+the filters are applied again. Sender names use `users.get`, with a bounded
+in-memory cache (up to 1024 entries); negative community senders use the neutral
+label `VK community`. Forward/reply relationships are not reconstructed yet.
+
+The cursor advances after the batch has been processed. `failed=1` replaces only
+`ts`; `failed=2` refreshes server/key while retaining `ts`; `failed=3` obtains a
+fresh cursor and logs a possible gap. Other failed codes stop the relay.
+
+**Delivery limitations:** no durable cursor, queue or deduplication exists yet.
+Restart and expired-cursor recovery can miss messages. A failure partway through
+a multi-part delivery can leave a partial message; accepted sends with lost HTTP
+responses are inherently ambiguous. There is no exactly-once guarantee or
+automatic replay of previously sent parts. This is a parallel evaluation relay,
+not a lossless replacement for the existing service.
 
 ## VK Client
 
@@ -19,11 +51,15 @@ VK API version `5.199` and exposes only:
 
 - `UsersGet(ctx, userIDs)` for `users.get`: ID, first name, last name.
 - `GetLongPollServer(ctx)` for `messages.getLongPollServer`: server, key, ts.
+- `GetMessageByID(ctx, id)` for `messages.getById`: only needed message fields.
+- `WaitLongPoll(ctx, server)` for read-only `a_check` waits with cursor updates.
 
 The timestamp uses `json.Number` to accept numeric and numeric-string responses
 without floating-point conversion. All three Long Poll fields must be present.
-Requests carry context and send credentials in form-encoded POST bodies, never
-in the URL. Redirects are not followed; response bodies are limited to 1 MiB.
+API requests carry context and send the access token in form-encoded POST bodies,
+never in the URL. Long Poll uses its own key in the query, not the access token;
+neither URL nor key is logged. Redirects are not followed; response bodies are
+limited to 1 MiB. Runtime VK timeout is 35 seconds; Long Poll wait is 25 seconds.
 Do not log the client, configuration, or Long Poll response (its key is secret).
 
 Errors can be inspected with `errors.As` / `errors.Is`:
@@ -39,8 +75,58 @@ Errors can be inspected with `errors.As` / `errors.Is`:
 VK codes are classified as 5 = authentication, 14 = CAPTCHA, 17 = validation,
 25 = manual action; other codes are generic API errors. Messages are generated
 locally from the code. Remote error messages, request parameters, response bodies,
-and raw transport diagnostics are not included in returned errors. No retries,
-workers, automatic CAPTCHA handling, or real API calls are run by tests.
+and raw transport diagnostics are not included in returned errors. Tests make no
+real API calls. No automatic CAPTCHA/validation handling exists.
+
+## Text And Attachments
+
+Ordinary text starts with `<b>Sender name</b>:`; wall reposts use
+`<b>Sender name</b> (репост):`. Sender and user text are HTML-escaped and line
+breaks are preserved. Wall text, a public `https://vk.com/wallOWNER_ID_POST_ID`
+link when IDs exist, nested attachments and `copy_history` are retained. An
+otherwise empty wall gets `📰 Запись на стене`; source labels are not fetched.
+Recursive wall traversal is limited to eight levels. Unsupported attachment
+types receive a plain placeholder rather than silently losing their presence.
+
+Photos are downloaded at the largest available size and uploaded using
+`sendPhoto`; consecutive photos are grouped with `sendMediaGroup` in batches of
+up to 10 (a remaining single photo uses `sendPhoto`). Documents use `sendDocument`.
+VK media URLs are never sent to Telegram as the media source. Downloads have a
+60-second timeout and limits of 10 MB/photo and 50 MB/document. No transcoding or
+oversize fallback is implemented; Telegram may reject unsupported media.
+
+The first media item carries the text as its caption. Other album items and
+subsequent media sends carry just the footer on a separate line. Long captions
+use up to 1024 UTF-16 units; remaining text is sent as `sendMessage` continuation
+parts of up to 4096 units. Every outgoing part has exactly one service-added
+footer, including every album item. Its size and the first-part header are
+reserved before splitting plain text, then HTML escaping is applied so entities
+and formatting tags are never split. Names are capped at 256 UTF-16 units.
+
+For each message with media, a private `vk2tg-media-*` directory is created under
+the OS temporary directory. Downloads use `vk-media-*` files; replayable
+multipart bodies use `telegram-upload-*` files. Files have mode 0600, directories
+0700. All source media is downloaded before the first send; the whole directory
+is removed on success, error or cancellation. A forced kill or machine crash
+can leave files behind. Do not run broad temporary-file cleanup on a shared host.
+
+## Errors And Retry
+
+VK transport errors, HTTP 429/5xx and API codes 6/9/10 retry after two seconds.
+Malformed Long Poll responses retry without advancing the cursor. VK 5/14/17/25
+and other non-transient API errors stop the relay with a safe error. Media
+network errors and HTTP 429/5xx retry before sending, with the same short pause.
+
+The Telegram client uses direct HTTPS POSTs, JSON for text and disk-backed
+multipart uploads for files, with a 120-second timeout and no redirects.
+`TelegramError` exposes numeric HTTP/API codes, never the remote description.
+HTTP/API 429 waits for `retry_after` (one second fallback) and retries the same
+body from its beginning. All waits and HTTP calls are context-cancelable.
+Other Telegram send errors stop the relay, without a service message in the
+channel or automatic resend that could duplicate an already accepted delivery.
+
+Logs contain only safe operational facts/counts, including `would relay message`
+in dry-run mode; no body, sender, media URLs, tokens or private IDs are logged.
 
 ## Configuration
 
@@ -89,6 +175,10 @@ file only, run in a subshell so credentials do not remain in the parent shell:
 )
 ```
 
-Stop with Ctrl+C or SIGTERM. Logs contain no tokens or private IDs. Do not dump
-the configuration, enable shell tracing around credentials, or run development
-against production resources. Keep `DRY_RUN=true` in the local development file.
+Keep `DRY_RUN=true` for the initial run. To deliberately enable parallel delivery,
+use the same command with `export DRY_RUN=false` immediately before `exec ./vk2tg`.
+This only changes the new process environment, not the old service. Do not run
+multiple copies of this new relay unless additional duplicate delivery is wanted.
+
+Stop with Ctrl+C or SIGTERM. Do not dump configuration, enable shell tracing around
+credentials, or log the Long Poll response. No changes to the old relay are needed.

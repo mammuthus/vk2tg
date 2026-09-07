@@ -148,7 +148,7 @@ func (client *VKClient) UsersGet(ctx context.Context, userIDs []int64) ([]VKUser
 
 func (client *VKClient) GetLongPollServer(ctx context.Context) (VKLongPollServer, error) {
 	var server VKLongPollServer
-	if err := client.call(ctx, "messages.getLongPollServer", url.Values{}, &server); err != nil {
+	if err := client.call(ctx, "messages.getLongPollServer", url.Values{"need_ssl": {"1"}, "lp_version": {"3"}}, &server); err != nil {
 		return VKLongPollServer{}, err
 	}
 	if server.Server == "" || server.Key == "" || server.TS == "" {
