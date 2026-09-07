@@ -13,7 +13,9 @@ line: `отправлено через vk2tg`.
 
 `DRY_RUN=true` is the default: VK Long Poll, filtering and normalization run, but
 Telegram requests and media downloads do not. Explicit `DRY_RUN=false` enables
-delivery. There is no database, metrics server, Telegram polling, or reverse relay.
+delivery. SQLite stores message mappings; no PostgreSQL, metrics server, Telegram
+polling, or reverse relay is used. Dry-run initializes the local schema but does
+not write message mappings.
 
 ## Relay Loop
 
@@ -29,18 +31,58 @@ Plain text events require no `messages.getById`. Attachment, forward or reply
 hints trigger that read-only call to obtain the full text and attachments, and
 the filters are applied again. Sender names use `users.get`, with a bounded
 in-memory cache (up to 1024 entries); negative community senders use the neutral
-label `VK community`. Forward/reply relationships are not reconstructed yet.
+label `VK community`. Replies use the full message's `reply_message.id` and the
+persisted mapping described below. Forwarded-message relationships are not
+reconstructed; neither a forward nor a wall repost is treated as a reply.
 
 The cursor advances after the batch has been processed. `failed=1` replaces only
 `ts`; `failed=2` refreshes server/key while retaining `ts`; `failed=3` obtains a
 fresh cursor and logs a possible gap. Other failed codes stop the relay.
 
-**Delivery limitations:** no durable cursor, queue or deduplication exists yet.
+**Delivery limitations:** no durable cursor or queue exists. Successfully mapped
+messages are deduplicated by the sequential runtime within one configured DB.
 Restart and expired-cursor recovery can miss messages. A failure partway through
 a multi-part delivery can leave a partial message; accepted sends with lost HTTP
 responses are inherently ambiguous. There is no exactly-once guarantee or
 automatic replay of previously sent parts. This is a parallel evaluation relay,
 not a lossless replacement for the existing service.
+
+## Persistent Replies
+
+`database/sql` with the pure-Go `modernc.org/sqlite` driver stores only:
+
+```sql
+CREATE TABLE IF NOT EXISTS message_map (
+  vk_message_id INTEGER PRIMARY KEY,
+  telegram_message_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+`STATE_DB_PATH` defaults to `state/vk2tg.sqlite`, relative to the working directory.
+Startup creates the parent directory if needed (0700), opens the file with mode
+0600, and initializes the schema. Shutdown closes the database. SQL operations
+use the caller's context with a five-second limit; SQLite busy timeout is also
+five seconds. Database files and sidecars are ignored by Git.
+
+After a complete successful delivery, the canonical Telegram ID is saved: the
+first text part, first single media message, or first item of the first album.
+Caption continuations and later media do not replace it. Missing or malformed
+Telegram response IDs fail delivery. A partial send failure creates no mapping.
+The first saved mapping wins; repeated normal-runtime events are skipped.
+
+For B replying to A, all Telegram sends for B use A's canonical ID through
+`reply_parameters`, including `sendMessage`, `sendPhoto`, `sendDocument` and
+`sendMediaGroup`. An unknown target is sent normally. The API's
+`allow_sending_without_reply=true` also permits delivery if a mapped target is
+no longer available in Telegram.
+
+Use a separate database for each VK account/peer and Telegram destination. The
+minimal schema has no account or chat columns: changing those settings requires
+a different `STATE_DB_PATH`. Run only one normal relay process per database.
+There is no cross-process send lock or transaction spanning Telegram and SQLite.
+A crash or database error after Telegram accepts a send can cause duplicates;
+persistence is not an exactly-once guarantee or a durable Long Poll cursor.
 
 ## VK Client
 
@@ -141,8 +183,12 @@ is reversed and delivered oldest-first. Count defaults to 3 and is restricted to
 It uses the same sender lookup/cache, normalization, wall renderer, HTML escaping,
 footer, caption splitting, media downloads and Telegram upload pipeline as the
 runtime. Full messages are already present in history, so there is no additional
-`messages.getById` call. Reply/forward relationships are still not reconstructed;
-unsupported attachment types retain the existing placeholder behavior.
+`messages.getById` call. Replies prefer the canonical ID of an earlier message in
+this replay, falling back to an existing SQLite mapping when available. A fresh
+in-memory map is used for each invocation; replay never inserts or overwrites
+normal-runtime mappings, and existing mappings never suppress manual sends.
+Forward relationships remain unsupported; unknown attachments retain the existing
+placeholder behavior.
 
 This is an explicit manual replay: owner/outbox messages are eligible, unlike the
 inbound-only Long Poll runtime. Peer checks and sender blocklist still apply before
@@ -165,7 +211,8 @@ without changing the file or the old relay:
 ```
 
 Logs report only selected/sent/skipped counts, chronological positions, media
-counts, repost flags and successful Telegram method names. They never include
+counts, repost/reply flags, unsupported-attachment/empty-wall/ignored-forward
+counts, and successful Telegram method names with returned message counts. They never include
 message content, private IDs, tokens or URLs. The command stops on send failure;
 earlier records or parts may already have been delivered. Do not blindly rerun it:
 there is no replay deduplication. Temporary media follows the runtime cleanup rules.
@@ -185,6 +232,7 @@ printing their contents. Tokens are required but are not validated via network.
 | `TELEGRAM_TARGET_CHAT_ID` | Yes | One destination chat/channel ID |
 | `VK_BLOCKED_SENDER_IDS` | No | Comma-separated sender IDs, deduplicated into a set; empty by default |
 | `DRY_RUN` | No | Defaults to `true`; set `false` explicitly to disable |
+| `STATE_DB_PATH` | No | SQLite file path; defaults to `state/vk2tg.sqlite` |
 
 `DRY_RUN` accepts Go's `strconv.ParseBool` values (`true`/`false`, `1`/`0`,
 `t`/`f`, including the supported uppercase forms). Blank means the safe default.
@@ -194,7 +242,8 @@ local environment; there is no runtime fallback to the old name.
 
 ## Local Checks And Run
 
-Use Go 1.27.1 or newer; no third-party dependencies are required.
+Use Go 1.27.1 or newer. SQLite uses `modernc.org/sqlite` (pinned in `go.mod`);
+no CGO, external SQLite service, or PostgreSQL is required.
 
 ```sh
 gofmt -w *.go

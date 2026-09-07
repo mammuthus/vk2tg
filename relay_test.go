@@ -70,7 +70,7 @@ func TestRelayEndToEnd(t *testing.T) {
 					if json.NewDecoder(request.Body).Decode(&payload) != nil || payload.Text != "<b>A &lt;B&gt; User</b>:\n\nhello &lt;&amp;&gt;\n\nотправлено через vk2tg" {
 						t.Error("incorrect relayed text")
 					}
-					writeFixture(t, writer, `{"ok":true,"result":{}}`)
+					writeTelegramSuccess(t, writer, request)
 				default:
 					t.Errorf("unexpected or write endpoint: %s", request.URL.Path)
 					writer.WriteHeader(400)
@@ -86,7 +86,7 @@ func TestRelayEndToEnd(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			relay := Relay{config: config, vk: vk, telegram: telegram, mediaHTTP: server.Client(), logger: slog.New(slog.NewJSONHandler(&log, nil)), tempRoot: t.TempDir(), retryDelay: time.Millisecond}
+			relay := Relay{config: config, vk: vk, telegram: telegram, store: testMessageStore(t), mediaHTTP: server.Client(), logger: slog.New(slog.NewJSONHandler(&log, nil)), tempRoot: t.TempDir(), retryDelay: time.Millisecond}
 			if err := relay.Run(t.Context()); err == nil {
 				t.Fatal("failed=4 should stop the loop")
 			}
@@ -281,7 +281,7 @@ func TestRelayWallPhoto(t *testing.T) {
 			if !strings.HasPrefix(caption, "<b>Sender</b> (репост):") || !strings.Contains(caption, "wall &lt;text&gt;\nsecond line") || !strings.Contains(caption, "https://vk.com/wall-42_7") || !strings.HasSuffix(caption, relayFooter) {
 				t.Error("incorrect wall caption")
 			}
-			writeFixture(t, writer, `{"ok":true,"result":{}}`)
+			writeTelegramSuccess(t, writer, request)
 		default:
 			t.Errorf("unexpected or write endpoint: %s", request.URL.Path)
 			writer.WriteHeader(400)
@@ -297,7 +297,7 @@ func TestRelayWallPhoto(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relay := Relay{config: config, vk: vk, telegram: telegram, mediaHTTP: server.Client(), tempRoot: t.TempDir(), logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	relay := Relay{config: config, vk: vk, telegram: telegram, store: testMessageStore(t), mediaHTTP: server.Client(), tempRoot: t.TempDir(), logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if relay.Run(t.Context()) == nil || photos != 1 {
 		t.Fatal("wall photo was not delivered")
 	}

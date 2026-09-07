@@ -21,7 +21,7 @@ type localMedia struct {
 	Path string
 }
 
-func deliverMessage(ctx context.Context, telegram *TelegramClient, mediaHTTP *http.Client, tempRoot string, message RenderedMessage) (result error) {
+func deliverMessage(ctx context.Context, telegram *TelegramClient, mediaHTTP *http.Client, tempRoot string, message RenderedMessage) (canonical int64, result error) {
 	limit := 4096
 	if len(message.Media) > 0 {
 		limit = 1024
@@ -29,26 +29,31 @@ func deliverMessage(ctx context.Context, telegram *TelegramClient, mediaHTTP *ht
 	chunks := renderChunks(message.Name, message.Repost, message.Text, limit)
 	if len(message.Media) == 0 {
 		for _, chunk := range chunks {
-			if err := telegram.SendMessage(ctx, chunk); err != nil {
-				return err
+			identifier, err := telegram.SendMessage(ctx, chunk, message.TelegramReplyID)
+			if err != nil {
+				return 0, err
+			}
+			if canonical == 0 {
+				canonical = identifier
 			}
 		}
-		return nil
+		return canonical, nil
 	}
 	directory, err := os.MkdirTemp(tempRoot, "vk2tg-media-*")
 	if err != nil {
-		return errors.New("cannot create media directory")
+		return 0, errors.New("cannot create media directory")
 	}
 	defer func() {
 		if os.RemoveAll(directory) != nil {
 			result = errors.Join(result, errors.New("temporary media cleanup failed"))
+			canonical = 0
 		}
 	}()
 	files := make([]localMedia, 0, len(message.Media))
 	for _, source := range message.Media {
 		path, err := downloadMedia(ctx, mediaHTTP, directory, source)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		files = append(files, localMedia{MediaSource: source, Path: path})
 	}
@@ -64,20 +69,22 @@ func deliverMessage(ctx context.Context, telegram *TelegramClient, mediaHTTP *ht
 		if first {
 			caption = chunks[0]
 		}
-		if err := telegram.sendFiles(ctx, directory, files[position:end], caption); err != nil {
-			return err
+		identifier, err := telegram.sendFiles(ctx, directory, files[position:end], caption, message.TelegramReplyID)
+		if err != nil {
+			return 0, err
 		}
 		if first {
+			canonical = identifier
 			for _, chunk := range chunks[1:] {
-				if err := telegram.SendMessage(ctx, chunk); err != nil {
-					return err
+				if _, err := telegram.SendMessage(ctx, chunk, message.TelegramReplyID); err != nil {
+					return 0, err
 				}
 			}
 		}
 		first = false
 		position = end
 	}
-	return nil
+	return canonical, nil
 }
 
 func downloadMedia(ctx context.Context, client *http.Client, directory string, source MediaSource) (string, error) {
@@ -143,16 +150,22 @@ func downloadAttempt(ctx context.Context, client *http.Client, address, path str
 	return false, nil
 }
 
-func (client *TelegramClient) sendFiles(ctx context.Context, directory string, files []localMedia, caption string) error {
+func (client *TelegramClient) sendFiles(ctx context.Context, directory string, files []localMedia, caption string, replyID int64) (int64, error) {
 	body, err := os.CreateTemp(directory, "telegram-upload-*")
 	if err != nil {
-		return errors.New("cannot create upload body")
+		return 0, errors.New("cannot create upload body")
 	}
 	defer body.Close()
 	defer os.Remove(body.Name())
 	writer := multipart.NewWriter(body)
 	if writer.WriteField("chat_id", strconv.FormatInt(client.chatID, 10)) != nil {
-		return errors.New("cannot encode upload")
+		return 0, errors.New("cannot encode upload")
+	}
+	if reply := telegramReply(replyID); reply != nil {
+		encoded, err := json.Marshal(reply)
+		if err != nil || writer.WriteField("reply_parameters", string(encoded)) != nil {
+			return 0, errors.New("cannot encode media reply")
+		}
 	}
 	method := "sendPhoto"
 	if len(files) > 1 {
@@ -179,30 +192,30 @@ func (client *TelegramClient) sendFiles(ctx context.Context, directory string, f
 		}
 		part, err := writer.CreateFormFile(field, safeFilename(file.Name))
 		if err != nil {
-			return errors.New("cannot encode upload file")
+			return 0, errors.New("cannot encode upload file")
 		}
 		input, err := os.Open(file.Path)
 		if err != nil {
-			return errors.New("cannot open upload file")
+			return 0, errors.New("cannot open upload file")
 		}
 		_, copyErr := io.Copy(part, input)
 		closeErr := input.Close()
 		if copyErr != nil || closeErr != nil {
-			return errors.New("cannot prepare upload file")
+			return 0, errors.New("cannot prepare upload file")
 		}
 	}
 	if len(album) > 0 {
 		encoded, err := json.Marshal(album)
 		if err != nil || writer.WriteField("media", string(encoded)) != nil {
-			return errors.New("cannot encode media group")
+			return 0, errors.New("cannot encode media group")
 		}
 	} else {
 		if writer.WriteField("caption", caption) != nil || writer.WriteField("parse_mode", "HTML") != nil {
-			return errors.New("cannot encode caption")
+			return 0, errors.New("cannot encode caption")
 		}
 	}
 	if writer.Close() != nil {
-		return errors.New("cannot finalize upload")
+		return 0, errors.New("cannot finalize upload")
 	}
 	return client.send(ctx, method, writer.FormDataContentType(), body)
 }

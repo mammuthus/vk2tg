@@ -16,14 +16,23 @@ type MediaSource struct {
 }
 
 type RenderedMessage struct {
-	Name   string
-	Repost bool
-	Text   string
-	Media  []MediaSource
+	UnsupportedAttachments int
+	WallFallbacks          int
+	IgnoredForwards        int
+	VKMessageID            int64
+	VKReplyToID            int64
+	TelegramReplyID        int64
+	Name                   string
+	Repost                 bool
+	Text                   string
+	Media                  []MediaSource
 }
 
 func normalizeMessage(message VKMessage, name string) (RenderedMessage, error) {
-	result := RenderedMessage{Name: name}
+	result := RenderedMessage{Name: name, VKMessageID: message.ID, IgnoredForwards: len(message.ForwardedMessages)}
+	if message.ReplyMessage != nil {
+		result.VKReplyToID = message.ReplyMessage.ID
+	}
 	var texts []string
 	if message.Text != "" {
 		texts = append(texts, message.Text)
@@ -49,6 +58,7 @@ func normalizeMessage(message VKMessage, name string) (RenderedMessage, error) {
 		}
 		if len(texts) == startText && len(result.Media) == startMedia {
 			texts = append(texts, "📰 Запись на стене")
+			result.WallFallbacks++
 		}
 		if post.ID != 0 && post.OwnerID != 0 {
 			texts = append(texts, fmt.Sprintf("https://vk.com/wall%d_%d", post.OwnerID, post.ID))
@@ -90,6 +100,7 @@ func normalizeMessage(message VKMessage, name string) (RenderedMessage, error) {
 				}
 			default:
 				texts = append(texts, "[Unsupported attachment]")
+				result.UnsupportedAttachments++
 			}
 		}
 		return nil

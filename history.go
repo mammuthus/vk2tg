@@ -65,6 +65,7 @@ func (relay *Relay) ReplayHistory(ctx context.Context, count int) error {
 	}
 	relay.logger.Info("history selected", "selected", len(messages), "requested", count, "dry_run", relay.config.DryRun)
 	sent, skipped := 0, 0
+	replayMap := make(map[int64]int64)
 	for index, message := range messages {
 		candidate := message
 		candidate.Out = 0
@@ -87,14 +88,25 @@ func (relay *Relay) ReplayHistory(ctx context.Context, count int) error {
 			}
 		}
 		if relay.config.DryRun {
-			relay.logger.Info("would replay history message", "position", index+1, "repost", rendered.Repost, "photos", photos, "documents", documents)
+			relay.logger.Info("would replay history message", "position", index+1, "repost", rendered.Repost, "photos", photos, "documents", documents, "unsupported_attachments", rendered.UnsupportedAttachments, "wall_fallbacks", rendered.WallFallbacks, "ignored_forwards", rendered.IgnoredForwards, "vk_reply", rendered.VKReplyToID > 0)
 			continue
 		}
-		if err := deliverMessage(ctx, relay.telegram, relay.mediaHTTP, relay.tempRoot, rendered); err != nil {
+		if rendered.VKReplyToID > 0 {
+			rendered.TelegramReplyID = replayMap[rendered.VKReplyToID]
+			if rendered.TelegramReplyID == 0 && relay.store != nil {
+				rendered.TelegramReplyID, err = relay.store.Lookup(ctx, rendered.VKReplyToID)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		canonical, err := deliverMessage(ctx, relay.telegram, relay.mediaHTTP, relay.tempRoot, rendered)
+		if err != nil {
 			return err
 		}
+		replayMap[message.ID] = canonical
 		sent++
-		relay.logger.Info("history message sent", "position", index+1, "repost", rendered.Repost, "photos", photos, "documents", documents)
+		relay.logger.Info("history message sent", "position", index+1, "repost", rendered.Repost, "photos", photos, "documents", documents, "unsupported_attachments", rendered.UnsupportedAttachments, "wall_fallbacks", rendered.WallFallbacks, "ignored_forwards", rendered.IgnoredForwards, "vk_reply", rendered.VKReplyToID > 0, "telegram_reply", rendered.TelegramReplyID > 0)
 	}
 	relay.logger.Info("history replay complete", "selected", len(messages), "sent", sent, "skipped", skipped, "dry_run", relay.config.DryRun)
 	return nil

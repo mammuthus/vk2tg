@@ -12,12 +12,16 @@ import (
 )
 
 type VKMessage struct {
-	ID          int64          `json:"id"`
-	PeerID      int64          `json:"peer_id"`
-	FromID      int64          `json:"from_id"`
-	Out         int            `json:"out"`
-	Text        string         `json:"text"`
-	Attachments []VKAttachment `json:"attachments"`
+	ID           int64          `json:"id"`
+	PeerID       int64          `json:"peer_id"`
+	FromID       int64          `json:"from_id"`
+	Out          int            `json:"out"`
+	Text         string         `json:"text"`
+	Attachments  []VKAttachment `json:"attachments"`
+	ReplyMessage *struct {
+		ID int64 `json:"id"`
+	} `json:"reply_message"`
+	ForwardedMessages []struct{} `json:"fwd_messages"`
 }
 
 type VKAttachment struct {

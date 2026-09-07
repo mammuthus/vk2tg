@@ -19,6 +19,7 @@ type Relay struct {
 	tempRoot    string
 	retryDelay  time.Duration
 	senderNames map[int64]string
+	store       *MessageStore
 }
 
 func (relay *Relay) Run(ctx context.Context) error {
@@ -94,7 +95,7 @@ func (relay *Relay) Run(ctx context.Context) error {
 				relay.logger.Info("would relay message", "media_count", len(message.Media), "repost", message.Repost)
 				continue
 			}
-			if err := deliverMessage(ctx, relay.telegram, relay.mediaHTTP, relay.tempRoot, message); err != nil {
+			if err := relay.deliverMapped(ctx, message); err != nil {
 				return err
 			}
 			relay.logger.Info("message relayed", "media_count", len(message.Media), "repost", message.Repost)
@@ -119,6 +120,15 @@ func (relay *Relay) prepare(ctx context.Context, event json.RawMessage) (Rendere
 	if !relay.accepts(message) {
 		return RenderedMessage{}, false, nil
 	}
+	if relay.store != nil {
+		identifier, err := relay.store.Lookup(ctx, message.ID)
+		if err != nil {
+			return RenderedMessage{}, false, err
+		}
+		if identifier != 0 {
+			return RenderedMessage{}, false, nil
+		}
+	}
 	if needsFull {
 		message, err = relay.vk.GetMessageByID(ctx, message.ID)
 		if err != nil {
@@ -129,6 +139,33 @@ func (relay *Relay) prepare(ctx context.Context, event json.RawMessage) (Rendere
 		}
 	}
 	return relay.prepareMessage(ctx, message)
+}
+
+func (relay *Relay) deliverMapped(ctx context.Context, message RenderedMessage) error {
+	if relay.config.DryRun {
+		return nil
+	}
+	if relay.store == nil {
+		return errors.New("state database is not open")
+	}
+	existing, err := relay.store.Lookup(ctx, message.VKMessageID)
+	if err != nil {
+		return err
+	}
+	if existing != 0 {
+		return nil
+	}
+	if message.VKReplyToID > 0 {
+		message.TelegramReplyID, err = relay.store.Lookup(ctx, message.VKReplyToID)
+		if err != nil {
+			return err
+		}
+	}
+	canonical, err := deliverMessage(ctx, relay.telegram, relay.mediaHTTP, relay.tempRoot, message)
+	if err != nil {
+		return err
+	}
+	return relay.store.Save(ctx, message.VKMessageID, canonical)
 }
 
 func (relay *Relay) prepareMessage(ctx context.Context, message VKMessage) (RenderedMessage, bool, error) {

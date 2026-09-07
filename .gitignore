@@ -16,3 +16,8 @@
 .idea/
 .vscode/
 .cache/
+/state/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*

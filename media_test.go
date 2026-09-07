@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,93 @@ import (
 	"testing"
 	"time"
 )
+
+func TestDeliveryCanonicalAndReply(t *testing.T) {
+	for _, kind := range []string{"text", "photo document", "album", "document", "long caption", "late failure"} {
+		t.Run(kind, func(t *testing.T) {
+			calls := 0
+			var methods []string
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/file" {
+					writeFixture(t, writer, "file-bytes")
+					return
+				}
+				calls++
+				method := strings.TrimPrefix(request.URL.Path, "/botfake-token/")
+				methods = append(methods, method)
+				var reply TelegramReplyParameters
+				if method == "sendMessage" {
+					var payload struct {
+						Reply TelegramReplyParameters `json:"reply_parameters"`
+						Text  string                  `json:"text"`
+					}
+					if json.NewDecoder(request.Body).Decode(&payload) != nil {
+						t.Error("invalid text request")
+					}
+					reply = payload.Reply
+					if !strings.HasSuffix(payload.Text, relayFooter) {
+						t.Error("lost continuation footer")
+					}
+				} else {
+					if request.ParseMultipartForm(1<<20) != nil {
+						t.Error("invalid multipart body")
+						return
+					}
+					defer request.MultipartForm.RemoveAll()
+					if json.Unmarshal([]byte(request.FormValue("reply_parameters")), &reply) != nil {
+						t.Error("missing media reply")
+					}
+				}
+				if reply.MessageID != 77 || !reply.AllowSendingWithoutReply {
+					t.Error("incorrect reply target")
+				}
+				if kind == "late failure" && calls == 2 {
+					writer.WriteHeader(500)
+					writeFixture(t, writer, `{"ok":false,"error_code":500}`)
+					return
+				}
+				identifier := 100 + calls
+				if method == "sendMediaGroup" {
+					writeFixture(t, writer, fmt.Sprintf(`{"ok":true,"result":[{"message_id":%d},{"message_id":999}]}`, identifier))
+				} else {
+					writeFixture(t, writer, fmt.Sprintf(`{"ok":true,"result":{"message_id":%d}}`, identifier))
+				}
+			}))
+			defer server.Close()
+			client, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			message := RenderedMessage{Name: "Sender", Text: "text", TelegramReplyID: 77}
+			photo := MediaSource{Kind: "photo", URL: server.URL + "/file", Name: "photo.jpg"}
+			document := MediaSource{Kind: "document", URL: server.URL + "/file", Name: "doc.txt"}
+			switch kind {
+			case "photo document", "late failure":
+				message.Media = []MediaSource{photo, document}
+			case "album":
+				message.Media = []MediaSource{photo, photo}
+			case "document":
+				message.Media = []MediaSource{document}
+			case "long caption":
+				message.Media = []MediaSource{photo}
+				message.Text = strings.Repeat("x", 6000)
+			}
+			identifier, err := deliverMessage(t.Context(), client, server.Client(), t.TempDir(), message)
+			if kind == "late failure" {
+				if err == nil || identifier != 0 {
+					t.Fatal("failed multi-part send returned canonical success")
+				}
+				return
+			}
+			if err != nil || identifier != 101 {
+				t.Fatalf("canonical must be first primary Telegram message: %d %v", identifier, err)
+			}
+			if kind == "photo document" && strings.Join(methods, ",") != "sendPhoto,sendDocument" {
+				t.Fatal("wrong multi-media order")
+			}
+		})
+	}
+}
 
 func TestMediaDelivery(t *testing.T) {
 	for _, kind := range []string{"photo", "album", "document", "long caption", "send failure"} {
@@ -80,7 +168,7 @@ func TestMediaDelivery(t *testing.T) {
 					writeFixture(t, writer, `{"ok":false,"error_code":400}`)
 					return
 				}
-				writeFixture(t, writer, `{"ok":true,"result":{}}`)
+				writeTelegramSuccess(t, writer, request)
 			}))
 			defer server.Close()
 			client, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
@@ -99,7 +187,7 @@ func TestMediaDelivery(t *testing.T) {
 				message.Text = strings.Repeat("x", 5000)
 			}
 			directory := t.TempDir()
-			err = deliverMessage(t.Context(), client, mediaServer.Client(), directory, message)
+			_, err = deliverMessage(t.Context(), client, mediaServer.Client(), directory, message)
 			if (err != nil) != (kind == "send failure") {
 				t.Fatalf("unexpected send result: %v", err)
 			}
@@ -145,7 +233,7 @@ func TestMediaRateLimitReplay(t *testing.T) {
 			writeFixture(t, writer, `{"ok":false,"error_code":429,"parameters":{"retry_after":1}}`)
 			return
 		}
-		writeFixture(t, writer, `{"ok":true,"result":{}}`)
+		writeTelegramSuccess(t, writer, request)
 	}))
 	defer server.Close()
 	client, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, 3*time.Second)
@@ -153,7 +241,7 @@ func TestMediaRateLimitReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	directory := t.TempDir()
-	err = deliverMessage(t.Context(), client, mediaServer.Client(), directory, RenderedMessage{Name: "Sender", Media: []MediaSource{{Kind: "photo", URL: mediaServer.URL, Name: "photo.jpg"}}})
+	_, err = deliverMessage(t.Context(), client, mediaServer.Client(), directory, RenderedMessage{Name: "Sender", Media: []MediaSource{{Kind: "photo", URL: mediaServer.URL, Name: "photo.jpg"}}})
 	if err != nil || calls != 2 {
 		t.Fatalf("multipart retry failed: %v", err)
 	}
@@ -169,7 +257,7 @@ func TestMediaDownloadCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) { cancel(); <-request.Context().Done() }))
 	defer server.Close()
 	directory := t.TempDir()
-	err := deliverMessage(ctx, nil, server.Client(), directory, RenderedMessage{Name: "Sender", Media: []MediaSource{{Kind: "photo", URL: server.URL, Name: "photo.jpg"}}})
+	_, err := deliverMessage(ctx, nil, server.Client(), directory, RenderedMessage{Name: "Sender", Media: []MediaSource{{Kind: "photo", URL: server.URL, Name: "photo.jpg"}}})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -210,7 +298,7 @@ func TestLargeAlbum(t *testing.T) {
 		} else {
 			t.Error("unexpected method")
 		}
-		writeFixture(t, writer, `{"ok":true,"result":{}}`)
+		writeTelegramSuccess(t, writer, request)
 	}))
 	defer server.Close()
 	client, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
@@ -221,7 +309,7 @@ func TestLargeAlbum(t *testing.T) {
 	for range 11 {
 		message.Media = append(message.Media, MediaSource{Kind: "photo", URL: mediaServer.URL, Name: "photo.jpg"})
 	}
-	if err := deliverMessage(t.Context(), client, mediaServer.Client(), t.TempDir(), message); err != nil {
+	if _, err := deliverMessage(t.Context(), client, mediaServer.Client(), t.TempDir(), message); err != nil {
 		t.Fatal(err)
 	}
 	if groups != 1 || photos != 1 {

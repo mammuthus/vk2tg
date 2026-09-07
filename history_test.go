@@ -45,7 +45,7 @@ func TestHistoryReplay(t *testing.T) {
 				t.Error("invalid Telegram payload")
 			}
 			sent = append(sent, payload.Text)
-			writeFixture(t, writer, `{"ok":true,"result":{}}`)
+			writeTelegramSuccess(t, writer, request)
 		default:
 			t.Errorf("unexpected or VK write endpoint: %s", request.URL.Path)
 			writer.WriteHeader(400)
@@ -132,7 +132,7 @@ func TestHistoryMediaPipeline(t *testing.T) {
 							}
 						}
 					}
-					writeFixture(t, writer, `{"ok":true,"result":{}}`)
+					writeTelegramSuccess(t, writer, request)
 				default:
 					t.Errorf("unexpected endpoint (history must not poll/write VK): %s", request.URL.Path)
 					writer.WriteHeader(400)

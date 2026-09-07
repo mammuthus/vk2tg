@@ -13,6 +13,7 @@ func TestLoadConfigValid(t *testing.T) {
 		"TELEGRAM_TARGET_CHAT_ID": "-1001234567890",
 		"VK_BLOCKED_SENDER_IDS":   "42, 73,42,-12",
 		"DRY_RUN":                 "false",
+		"STATE_DB_PATH":           "custom.sqlite",
 	}
 	config, err := loadConfig(func(key string) string { return testingEnvironment[key] })
 	if err != nil {
@@ -26,6 +27,9 @@ func TestLoadConfigValid(t *testing.T) {
 	}
 	if config.DryRun {
 		t.Error("explicit false did not disable dry run")
+	}
+	if config.StateDBPath != "custom.sqlite" {
+		t.Error("state database path not loaded")
 	}
 	if len(config.VKBlockedSenderIDs) != 3 {
 		t.Fatal("blocklist must deduplicate IDs")
@@ -120,6 +124,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 			}
 			if config.DryRun != testCase.wantDryRun {
 				t.Errorf("dry run = %v, want %v", config.DryRun, testCase.wantDryRun)
+			}
+			if config.StateDBPath != "state/vk2tg.sqlite" {
+				t.Error("unexpected default state path")
 			}
 			if config.VKBlockedSenderIDs == nil || len(config.VKBlockedSenderIDs) != 0 {
 				t.Error("empty blocklist must produce an empty set")

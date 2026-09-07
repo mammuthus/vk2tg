@@ -46,7 +46,7 @@ func TestNormalizeWall(t *testing.T) {
 	}
 	message.Attachments[0].Wall = &VKWall{}
 	rendered, err = normalizeMessage(message, "Sender")
-	if err != nil || !strings.Contains(rendered.Text, "📰 Запись на стене") {
+	if err != nil || !strings.Contains(rendered.Text, "📰 Запись на стене") || rendered.WallFallbacks != 1 {
 		t.Fatal("missing empty-wall fallback")
 	}
 }

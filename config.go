@@ -13,6 +13,7 @@ type Config struct {
 	TelegramTargetChatID int64
 	VKBlockedSenderIDs   map[int64]struct{}
 	DryRun               bool
+	StateDBPath          string
 }
 
 func loadConfig(getenv func(string) string) (Config, error) {
@@ -21,6 +22,10 @@ func loadConfig(getenv func(string) string) (Config, error) {
 		TelegramBotToken:   strings.TrimSpace(getenv("TELEGRAM_BOT_TOKEN")),
 		VKBlockedSenderIDs: make(map[int64]struct{}),
 		DryRun:             true,
+		StateDBPath:        strings.TrimSpace(getenv("STATE_DB_PATH")),
+	}
+	if config.StateDBPath == "" {
+		config.StateDBPath = "state/vk2tg.sqlite"
 	}
 	if config.VKAccessToken == "" {
 		return Config{}, fmt.Errorf("VK_ACCESS_TOKEN is required")

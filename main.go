@@ -34,7 +34,7 @@ func main() {
 	logger.Info("vk2tg shutdown complete")
 }
 
-func runRelay(ctx context.Context, config Config, logger *slog.Logger, historyCount int) error {
+func runRelay(ctx context.Context, config Config, logger *slog.Logger, historyCount int) (result error) {
 	vk, err := NewVKClient(config, "", 35*time.Second)
 	if err != nil {
 		return err
@@ -43,8 +43,13 @@ func runRelay(ctx context.Context, config Config, logger *slog.Logger, historyCo
 	if err != nil {
 		return err
 	}
+	store, err := OpenMessageStore(ctx, config.StateDBPath)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, store.Close()) }()
 	relay := Relay{
-		config: config, vk: vk, telegram: telegram, logger: logger,
+		config: config, vk: vk, telegram: telegram, logger: logger, store: store,
 		mediaHTTP: &http.Client{Timeout: 60 * time.Second},
 	}
 	if historyCount > 0 {
