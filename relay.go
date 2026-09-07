@@ -169,6 +169,16 @@ func (relay *Relay) deliverMapped(ctx context.Context, message RenderedMessage) 
 }
 
 func (relay *Relay) prepareMessage(ctx context.Context, message VKMessage) (RenderedMessage, bool, error) {
+	if err := relay.vk.enrichStickers(ctx, message); err != nil {
+		return RenderedMessage{}, false, err
+	}
+	rendered, err := normalizeMessage(message, "")
+	if err != nil {
+		return RenderedMessage{}, false, err
+	}
+	if strings.TrimSpace(rendered.Text) == "" && len(rendered.Media) == 0 {
+		return RenderedMessage{}, false, nil
+	}
 	if relay.senderNames == nil {
 		relay.senderNames = make(map[int64]string)
 	}
@@ -193,8 +203,8 @@ func (relay *Relay) prepareMessage(ctx context.Context, message VKMessage) (Rend
 		}
 		relay.senderNames[message.FromID] = name
 	}
-	rendered, err := normalizeMessage(message, name)
-	return rendered, err == nil, err
+	rendered.Name = name
+	return rendered, true, nil
 }
 
 func retryableVK(err error) bool {

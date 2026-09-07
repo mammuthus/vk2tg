@@ -158,8 +158,12 @@ func (client *VKClient) GetLongPollServer(ctx context.Context) (VKLongPollServer
 }
 
 func (client *VKClient) call(ctx context.Context, method string, parameters url.Values, result any) error {
+	return client.callVersion(ctx, method, parameters, result, VKAPIVersion)
+}
+
+func (client *VKClient) callVersion(ctx context.Context, method string, parameters url.Values, result any, version string) error {
 	parameters.Set("access_token", client.token)
-	parameters.Set("v", VKAPIVersion)
+	parameters.Set("v", version)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/"+method, strings.NewReader(parameters.Encode()))
 	if err != nil {
 		return errors.New("vk request creation failed")

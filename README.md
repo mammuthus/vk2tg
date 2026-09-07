@@ -24,7 +24,7 @@ only new message events (type 4, user Long Poll version 3, mode 2). It does not
 load history. The event provides message ID at index 1, flags at 2, peer at 3,
 text at 5, extra fields at 6 and attachment hints at 7. The outbox bit is `2`.
 Sender ID comes from `extra.from`, or the peer for a direct inbound user message.
-Unknown chat senders and service events are ignored. Peer, outbox and the sender
+Unknown chat senders and empty service events are ignored. Peer, outbox and the sender
 blocklist are checked before metadata requests or attachment processing.
 
 Plain text events require no `messages.getById`. Attachment, forward or reply
@@ -92,7 +92,7 @@ The normal runtime uses only the methods below; manual history replay also uses
 `NewVKClient(config, baseURL, timeout)` takes the access token from `Config` and
 requires a positive HTTP timeout. An empty base URL selects
 `https://api.vk.com/method`; tests use a local `httptest.Server`. The client pins
-VK API version `5.199` and exposes only:
+VK API version `5.199` (except the sticker-image compatibility lookup below) and exposes only:
 
 - `UsersGet(ctx, userIDs)` for `users.get`: ID, first name, last name.
 - `GetLongPollServer(ctx)` for `messages.getLongPollServer`: server, key, ts.
@@ -132,6 +132,24 @@ link when IDs exist, nested attachments and `copy_history` are retained. An
 otherwise empty wall gets `📰 Запись на стене`; source labels are not fetched.
 Recursive wall traversal is limited to eight levels. Unsupported attachment
 types receive a plain placeholder rather than silently losing their presence.
+
+Stickers use the largest available image by pixel area from `images` and
+`images_with_background`; a background variant wins ties. They are ordinary photo
+uploads, not Telegram stickers, and use the same footer, size limit, timeout and
+temporary-file cleanup as other photos. VK 5.199 can return only `sticker_id`,
+without image URLs. Only in that case, a read-only `messages.getById` lookup using
+VK 5.131 retrieves image variants. Message/peer/sender and sticker IDs must match;
+only sticker images are copied, never text or other message metadata. A missing
+or invalid image response fails delivery rather than silently dropping the sticker.
+
+Link attachments whose URL is already in the accumulated text add nothing.
+Otherwise their URL is appended as plain text; no separate preview card is built.
+Other unsupported attachment types still get `[Unsupported attachment]`.
+
+Messages with no non-whitespace rendered text or media are skipped, including
+empty `chat_pin_message` actions. An action with useful text or attachments is
+retained; the action alone never produces a header/footer-only send. This content
+filter is shared by normal runtime and manual replay.
 
 Photos are downloaded at the largest available size and uploaded using
 `sendPhoto`; consecutive photos are grouped with `sendMediaGroup` in batches of
@@ -182,8 +200,9 @@ is reversed and delivered oldest-first. Count defaults to 3 and is restricted to
 
 It uses the same sender lookup/cache, normalization, wall renderer, HTML escaping,
 footer, caption splitting, media downloads and Telegram upload pipeline as the
-runtime. Full messages are already present in history, so there is no additional
-`messages.getById` call. Replies prefer the canonical ID of an earlier message in
+runtime. Full messages are already present in history; only stickers without
+image URLs need the compatibility `messages.getById` call described above.
+Replies prefer the canonical ID of an earlier message in
 this replay, falling back to an existing SQLite mapping when available. A fresh
 in-memory map is used for each invocation; replay never inserts or overwrites
 normal-runtime mappings, and existing mappings never suppress manual sends.
@@ -192,7 +211,7 @@ placeholder behavior.
 
 This is an explicit manual replay: owner/outbox messages are eligible, unlike the
 inbound-only Long Poll runtime. Peer checks and sender blocklist still apply before
-metadata or media work. Blocked records are skipped, not replaced with older ones.
+metadata or media work. Blocked and empty/service-only records are skipped, not replaced with older ones.
 Fewer than N available/eligible records therefore means fewer than N sends. N counts
 source VK records, not Telegram API calls: albums and continuation parts may produce
 multiple Telegram messages. Every part retains the service footer.

@@ -22,13 +22,21 @@ type VKMessage struct {
 		ID int64 `json:"id"`
 	} `json:"reply_message"`
 	ForwardedMessages []struct{} `json:"fwd_messages"`
+	Action            *struct {
+		Type string `json:"type"`
+	} `json:"action"`
 }
 
 type VKAttachment struct {
-	Type  string   `json:"type"`
-	Photo *VKPhoto `json:"photo"`
-	Doc   *VKDoc   `json:"doc"`
-	Wall  *VKWall  `json:"wall"`
+	Sticker *VKSticker `json:"sticker"`
+	Type    string     `json:"type"`
+	Photo   *VKPhoto   `json:"photo"`
+	Doc     *VKDoc     `json:"doc"`
+	Wall    *VKWall    `json:"wall"`
+	Link    *struct {
+		URL   string `json:"url"`
+		Title string `json:"title"`
+	} `json:"link"`
 }
 
 type VKPhoto struct {
@@ -154,11 +162,12 @@ func decodeLongPollMessage(raw json.RawMessage) (VKMessage, bool, error) {
 	} else if message.PeerID > 0 && message.PeerID < 2000000000 && message.Out == 0 {
 		message.FromID = message.PeerID
 	}
-	if _, service := extra["source_act"]; service {
+	_, service := extra["source_act"]
+	if service && strings.TrimSpace(message.Text) == "" && len(attachments) == 0 {
 		return VKMessage{}, false, nil
 	}
 	message.Text = html.UnescapeString(strings.ReplaceAll(message.Text, "<br>", "\n"))
 	_, forwarded := extra["fwd"]
 	_, replied := extra["reply"]
-	return message, len(attachments) != 0 || forwarded || replied, nil
+	return message, len(attachments) != 0 || forwarded || replied || service, nil
 }

@@ -74,9 +74,14 @@ func (relay *Relay) ReplayHistory(ctx context.Context, count int) error {
 			relay.logger.Info("history message skipped", "position", index+1)
 			continue
 		}
-		rendered, _, err := relay.prepareMessage(ctx, message)
+		rendered, accepted, err := relay.prepareMessage(ctx, message)
 		if err != nil {
 			return err
+		}
+		if !accepted {
+			skipped++
+			relay.logger.Info("history message skipped", "position", index+1, "reason", "empty_content")
+			continue
 		}
 		photos, documents := 0, 0
 		for _, media := range rendered.Media {

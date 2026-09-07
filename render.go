@@ -71,6 +71,19 @@ func normalizeMessage(message VKMessage, name string) (RenderedMessage, error) {
 		}
 		for _, attachment := range items {
 			switch attachment.Type {
+			case "sticker":
+				address := attachment.Sticker.imageURL()
+				if address == "" {
+					return ErrVKInvalidResponse
+				}
+				result.Media = append(result.Media, MediaSource{Kind: "photo", URL: address, Name: "sticker.png"})
+			case "link":
+				if attachment.Link == nil || strings.TrimSpace(attachment.Link.URL) == "" {
+					return ErrVKInvalidResponse
+				}
+				if !strings.Contains(strings.Join(texts, "\n\n"), attachment.Link.URL) {
+					texts = append(texts, attachment.Link.URL)
+				}
 			case "photo":
 				if attachment.Photo == nil {
 					return ErrVKInvalidResponse
