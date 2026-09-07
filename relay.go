@@ -128,6 +128,13 @@ func (relay *Relay) prepare(ctx context.Context, event json.RawMessage) (Rendere
 			return RenderedMessage{}, false, nil
 		}
 	}
+	return relay.prepareMessage(ctx, message)
+}
+
+func (relay *Relay) prepareMessage(ctx context.Context, message VKMessage) (RenderedMessage, bool, error) {
+	if relay.senderNames == nil {
+		relay.senderNames = make(map[int64]string)
+	}
 	name := relay.senderNames[message.FromID]
 	if name == "" {
 		name = "VK community"

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,6 +18,7 @@ type TelegramClient struct {
 	endpoint   string
 	chatID     int64
 	httpClient *http.Client
+	logger     *slog.Logger
 }
 
 type TelegramError struct {
@@ -126,6 +128,9 @@ func (client *TelegramClient) sendOnce(ctx context.Context, method, contentType 
 	}
 	if len(data) > 1<<20 || decodeErr != nil {
 		return errors.New("invalid telegram response")
+	}
+	if client.logger != nil {
+		client.logger.Info("telegram send confirmed", "method", method)
 	}
 	return nil
 }

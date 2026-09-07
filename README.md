@@ -44,6 +44,9 @@ not a lossless replacement for the existing service.
 
 ## VK Client
 
+The normal runtime uses only the methods below; manual history replay also uses
+`messages.getHistory` as described in the next section.
+
 `NewVKClient(config, baseURL, timeout)` takes the access token from `Config` and
 requires a positive HTTP timeout. An empty base URL selects
 `https://api.vk.com/method`; tests use a local `httptest.Server`. The client pins
@@ -127,6 +130,45 @@ channel or automatic resend that could duplicate an already accepted delivery.
 
 Logs contain only safe operational facts/counts, including `would relay message`
 in dry-run mode; no body, sender, media URLs, tokens or private IDs are logged.
+
+## Manual Historical Test
+
+`./vk2tg test-history --count 3` selects the latest three records from the configured
+peer using `messages.getHistory` (`offset=0`, `rev=0`). The newest-first response
+is reversed and delivered oldest-first. Count defaults to 3 and is restricted to
+1..100. This command does not acquire a Long Poll server or start the runtime loop.
+
+It uses the same sender lookup/cache, normalization, wall renderer, HTML escaping,
+footer, caption splitting, media downloads and Telegram upload pipeline as the
+runtime. Full messages are already present in history, so there is no additional
+`messages.getById` call. Reply/forward relationships are still not reconstructed;
+unsupported attachment types retain the existing placeholder behavior.
+
+This is an explicit manual replay: owner/outbox messages are eligible, unlike the
+inbound-only Long Poll runtime. Peer checks and sender blocklist still apply before
+metadata or media work. Blocked records are skipped, not replaced with older ones.
+Fewer than N available/eligible records therefore means fewer than N sends. N counts
+source VK records, not Telegram API calls: albums and continuation parts may produce
+multiple Telegram messages. Every part retains the service footer.
+
+The command respects `DRY_RUN`. To deliberately send using a trusted local `.env`,
+without changing the file or the old relay:
+
+```sh
+(
+  set -a
+  . ./.env
+  set +a
+  export DRY_RUN=false
+  exec ./vk2tg test-history --count 3
+)
+```
+
+Logs report only selected/sent/skipped counts, chronological positions, media
+counts, repost flags and successful Telegram method names. They never include
+message content, private IDs, tokens or URLs. The command stops on send failure;
+earlier records or parts may already have been delivered. Do not blindly rerun it:
+there is no replay deduplication. Temporary media follows the runtime cleanup rules.
 
 ## Configuration
 
