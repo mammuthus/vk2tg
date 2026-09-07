@@ -26,7 +26,7 @@ func deliverMessage(ctx context.Context, telegram *TelegramClient, mediaHTTP *ht
 	if len(message.Media) > 0 {
 		limit = 1024
 	}
-	chunks := renderChunks(message.Name, message.Repost, message.Text, limit)
+	chunks := renderChunks(message.Name, message.Repost, message.Text, limit, message.SourceURL)
 	if len(message.Media) == 0 {
 		for _, chunk := range chunks {
 			identifier, err := telegram.SendMessage(ctx, chunk, message.TelegramReplyID)

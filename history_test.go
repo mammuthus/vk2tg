@@ -65,7 +65,7 @@ func TestHistoryReplay(t *testing.T) {
 	if err := relay.ReplayHistory(t.Context(), 3); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{renderChunks("A <B>", false, "owner", 4096)[0], renderChunks("A <B>", false, "new <&>", 4096)[0]}
+	want := []string{renderChunks("A <B>", false, "owner", 4096, "")[0], renderChunks("A <B>", false, "new <&>", 4096, "")[0]}
 	if !reflect.DeepEqual(sent, want) || metadata != 1 {
 		t.Fatalf("history order, renderer or blocklist failed; sends=%d metadata=%d", len(sent), metadata)
 	}
@@ -115,7 +115,7 @@ func TestHistoryMediaPipeline(t *testing.T) {
 					} else if !strings.HasSuffix(caption, relayFooter) {
 						t.Error("missing history footer")
 					}
-					if method == "sendPhoto" && (!strings.Contains(caption, "<b>Sender</b> (репост)\n\n") || !strings.Contains(caption, "wall &lt;text&gt;\nnext line") || !strings.Contains(caption, "https://vk.com/wall-42_9")) {
+					if method == "sendPhoto" && (!strings.HasPrefix(caption, "<b>Sender</b> (<a href=\"https://vk.ru/wall-42_9\">репост</a>)\n\n") || !strings.Contains(caption, "wall &lt;text&gt;\nnext line") || strings.Count(caption, "https://vk.ru/wall-42_9") != 1) {
 						t.Error("history bypasses wall renderer")
 					}
 					for _, files := range request.MultipartForm.File {

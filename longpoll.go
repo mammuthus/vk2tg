@@ -53,6 +53,7 @@ type VKDoc struct {
 }
 
 type VKWall struct {
+	URL         string         `json:"url"`
 	ID          int64          `json:"id"`
 	OwnerID     int64          `json:"owner_id"`
 	Text        string         `json:"text"`

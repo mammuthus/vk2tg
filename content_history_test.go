@@ -78,7 +78,7 @@ func TestHistoryStickerLinkAndService(t *testing.T) {
 						t.Error("invalid text send")
 					}
 					want := map[int]string{2: "See https://example.test/lesson", 3: "useful content", 5: "https://example.test/only", 6: "[Unsupported attachment]"}[len(methods)]
-					if want == "" || payload.Text != renderChunks("Sender", false, want, 4096)[0] {
+					if want == "" || payload.Text != renderChunks("Sender", false, want, 4096, "")[0] {
 						t.Error("empty service send, duplicate link, lost content or unknown fallback regression")
 					}
 					writeTelegramSuccess(t, writer, request)

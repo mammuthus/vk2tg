@@ -24,6 +24,7 @@ type RenderedMessage struct {
 	TelegramReplyID        int64
 	Name                   string
 	Repost                 bool
+	SourceURL              string
 	Text                   string
 	Media                  []MediaSource
 }
@@ -44,6 +45,13 @@ func normalizeMessage(message VKMessage, name string) (RenderedMessage, error) {
 			return ErrVKInvalidResponse
 		}
 		result.Repost = true
+		source := post.URL
+		if source == "" && post.ID != 0 && post.OwnerID != 0 {
+			source = fmt.Sprintf("https://vk.ru/wall%d_%d", post.OwnerID, post.ID)
+		}
+		if result.SourceURL == "" {
+			result.SourceURL = source
+		}
 		startText, startMedia := len(texts), len(result.Media)
 		if post.Text != "" {
 			texts = append(texts, post.Text)
@@ -60,8 +68,8 @@ func normalizeMessage(message VKMessage, name string) (RenderedMessage, error) {
 			texts = append(texts, "📰 Запись на стене")
 			result.WallFallbacks++
 		}
-		if post.ID != 0 && post.OwnerID != 0 {
-			texts = append(texts, fmt.Sprintf("https://vk.com/wall%d_%d", post.OwnerID, post.ID))
+		if source != "" && source != result.SourceURL {
+			texts = append(texts, source)
 		}
 		return nil
 	}
@@ -125,7 +133,7 @@ func normalizeMessage(message VKMessage, name string) (RenderedMessage, error) {
 	return result, nil
 }
 
-func renderChunks(name string, repost bool, text string, firstLimit int) []string {
+func renderChunks(name string, repost bool, text string, firstLimit int, sourceURL string) []string {
 	name, _ = takeUTF16(name, 256)
 	if name == "" {
 		name = "VK sender"
@@ -134,8 +142,11 @@ func renderChunks(name string, repost bool, text string, firstLimit int) []strin
 	if repost {
 		suffix = " (репост)\n\n"
 	}
-	header := "<b>" + html.EscapeString(name) + "</b>" + suffix
 	headerLength := utf16Length(name + suffix)
+	if repost && sourceURL != "" {
+		suffix = " (<a href=\"" + html.EscapeString(sourceURL) + "\">репост</a>)\n\n"
+	}
+	header := "<b>" + html.EscapeString(name) + "</b>" + suffix
 	footer := "\n\n" + relayFooter
 	var chunks []string
 	limit := firstLimit

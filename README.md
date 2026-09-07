@@ -126,9 +126,14 @@ real API calls. No automatic CAPTCHA/validation handling exists.
 ## Text And Attachments
 
 Ordinary text starts with `<b>Sender name</b>`; wall reposts use
-`<b>Sender name</b> (репост)`. Sender and user text are HTML-escaped and line
-breaks are preserved. Wall text, a public `https://vk.com/wallOWNER_ID_POST_ID`
-link when IDs exist, nested attachments and `copy_history` are retained. An
+`<b>Sender name</b> (<a href="SOURCE_URL">репост</a>)` when a source is known,
+or `<b>Sender name</b> (репост)` otherwise. Source URLs are HTML-escaped.
+Generated links use `https://vk.ru/wallOWNER_ID_POST_ID`; a ready-made wall URL
+is preserved. The first outer wall source (or the first nested source when the
+outer source is unavailable) goes in the header, without an extra generated
+body link. Links to other nested wall posts and URLs in user text are retained.
+Sender and user text are HTML-escaped and line breaks are preserved. Wall text,
+nested attachments and `copy_history` are retained. An
 otherwise empty wall gets `📰 Запись на стене`; source labels are not fetched.
 Recursive wall traversal is limited to eight levels. Unsupported attachment
 types receive a plain placeholder rather than silently losing their presence.

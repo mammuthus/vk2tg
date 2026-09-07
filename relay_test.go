@@ -278,7 +278,7 @@ func TestRelayWallPhoto(t *testing.T) {
 			}
 			defer request.MultipartForm.RemoveAll()
 			caption := request.FormValue("caption")
-			if !strings.HasPrefix(caption, "<b>Sender</b> (репост)\n\n") || !strings.Contains(caption, "wall &lt;text&gt;\nsecond line") || !strings.Contains(caption, "https://vk.com/wall-42_7") || !strings.HasSuffix(caption, relayFooter) {
+			if !strings.HasPrefix(caption, "<b>Sender</b> (<a href=\"https://vk.ru/wall-42_7\">репост</a>)\n\n") || !strings.Contains(caption, "wall &lt;text&gt;\nsecond line") || strings.Count(caption, "https://vk.ru/wall-42_7") != 1 || !strings.HasSuffix(caption, relayFooter) {
 				t.Error("incorrect wall caption")
 			}
 			writeTelegramSuccess(t, writer, request)
