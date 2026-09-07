@@ -48,6 +48,7 @@ func runRelay(ctx context.Context, config Config, logger *slog.Logger, historyCo
 		return err
 	}
 	defer func() { result = errors.Join(result, store.Close()) }()
+	logger.Info("state database opened")
 	relay := Relay{
 		config: config, vk: vk, telegram: telegram, logger: logger, store: store,
 		mediaHTTP: &http.Client{Timeout: 60 * time.Second},

@@ -259,6 +259,59 @@ Blocklists accept whitespace around IDs, but reject empty entries and zero.
 Legacy `BOT_TOKEN` must be renamed to `TELEGRAM_BOT_TOKEN` when preparing the
 local environment; there is no runtime fallback to the old name.
 
+## Docker Deployment
+
+`compose.yaml` is an explicitly live deployment: it overrides `DRY_RUN=false`
+without changing the private local `.env`. Startup runs only new-event Long Poll,
+never historical replay. Do not run a second host binary alongside this container.
+
+```sh
+docker compose -p vk2tg -f compose.yaml config --quiet
+docker compose -p vk2tg -f compose.yaml build
+docker compose -p vk2tg -f compose.yaml up -d --no-deps vk2tg
+docker compose -p vk2tg -f compose.yaml logs --tail 50 vk2tg
+```
+
+The multi-stage image builds a stripped binary with `CGO_ENABLED=0` and uses
+Alpine with CA certificates at runtime. UID/GID 10001 owns `/data`; a fresh named
+volume inherits these permissions. The project creates only `vk2tg_default`
+and `vk2tg_state`, with no ports or external resources. SQLite lives at
+`/data/state.db`. The image build context allows only Go source and module files;
+the local environment, databases, Git and AI files never enter image layers.
+
+The root filesystem is read-only, `/tmp` is a private 512 MiB tmpfs, capabilities
+are dropped, and privilege escalation is disabled. Very large multipart batches
+can exceed that temporary storage limit and fail rather than exhaust host disk.
+Logs rotate at 10 MiB with three files. Restart policy is `unless-stopped`.
+The exec entrypoint receives SIGTERM directly, cancels Long Poll/network work and
+closes SQLite; Compose allows 30 seconds for graceful shutdown.
+
+Successful startup logs `state database opened` and `vk long poll connected`.
+Completed polls log `vk long poll cycle complete` with an update count only.
+These confirm VK authorization and actual polling, not merely a running process.
+Errors/repeated transient retry warnings require investigation; container status
+alone is not a health guarantee. No synthetic network healthcheck is used.
+
+```sh
+docker compose -p vk2tg -f compose.yaml restart vk2tg
+docker compose -p vk2tg -f compose.yaml up -d --no-deps --force-recreate vk2tg
+```
+
+Both retain the named volume. Never use `down -v` for a live deployment. Existing
+Python relay resources are independent and must not be changed by these commands.
+The durable mapping survives restart; the Long Poll cursor still does not, so
+events during downtime can be missed. Replies to pre-deployment messages without
+a mapping are sent normally. Historical tests deliberately do not seed live state.
+
+`TestDeploymentVolumePersistence` runs locally against a temporary database.
+For isolated container verification, compile tests with `CGO_ENABLED=0 go test -c`.
+Run that test binary with `VK2TG_VOLUME_TEST=seed`, then `verify` after recreating
+the service, mounting only the new volume and using `--network none`. It uses
+`/data/deployment-check.sqlite`, never live mappings, and verifies replies against
+a loopback mock Telegram API. Remove that fixture DB after verification.
+`VK2TG_STATE_AUDIT=1` enables `TestDeploymentStateAudit`, a read-only live integrity,
+row-count and fingerprint check; it never prints message IDs or credentials.
+
 ## Local Checks And Run
 
 Use Go 1.27.1 or newer. SQLite uses `modernc.org/sqlite` (pinned in `go.mod`);

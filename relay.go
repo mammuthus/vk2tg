@@ -47,6 +47,7 @@ func (relay *Relay) Run(ctx context.Context) error {
 				fresh.TS = server.TS
 			}
 			server = fresh
+			relay.logger.Info("vk long poll connected")
 		}
 		batch, err := relay.vk.WaitLongPoll(ctx, server)
 		if err != nil {
@@ -101,6 +102,7 @@ func (relay *Relay) Run(ctx context.Context) error {
 			relay.logger.Info("message relayed", "media_count", len(message.Media), "repost", message.Repost)
 		}
 		server.TS = batch.TS
+		relay.logger.Info("vk long poll cycle complete", "updates", len(batch.Updates))
 	}
 }
 

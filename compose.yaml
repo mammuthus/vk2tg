@@ -1,0 +1,30 @@
+name: vk2tg
+
+services:
+  vk2tg:
+    build: .
+    image: vk2tg:local
+    env_file:
+      - .env
+    environment:
+      DRY_RUN: "false"
+      STATE_DB_PATH: /data/state.db
+    volumes:
+      - state:/data
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  state:
