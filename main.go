@@ -49,6 +49,9 @@ func runRelay(ctx context.Context, config Config, logger *slog.Logger, historyCo
 	}
 	defer func() { result = errors.Join(result, store.Close()) }()
 	logger.Info("state database opened")
+	if err := vk.ConfigureRateProtection(ctx, store, logger); err != nil {
+		return err
+	}
 	relay := Relay{
 		config: config, vk: vk, telegram: telegram, logger: logger, store: store,
 		mediaHTTP: &http.Client{Timeout: 60 * time.Second},

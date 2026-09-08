@@ -56,6 +56,11 @@ func OpenMessageStore(ctx context.Context, path string) (*MessageStore, error) {
 vk_message_id INTEGER PRIMARY KEY,
 telegram_message_id INTEGER NOT NULL,
 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS vk_rate_state (
+singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+cooldown_until INTEGER NOT NULL,
+flood_level INTEGER NOT NULL
 )`)
 	if err != nil {
 		failure := safeTransferError(operation, "cannot initialize state database", err)
@@ -65,6 +70,46 @@ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		return nil, failure
 	}
 	return &MessageStore{db: db}, nil
+}
+
+func (store *MessageStore) LoadVKRateState(ctx context.Context) (time.Time, int, error) {
+	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var unixSeconds int64
+	var level int
+	err := store.db.QueryRowContext(operation, "SELECT cooldown_until, flood_level FROM vk_rate_state WHERE singleton = 1").Scan(&unixSeconds, &level)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, 0, nil
+	}
+	if err != nil {
+		return time.Time{}, 0, safeTransferError(operation, "VK rate state lookup failed", err)
+	}
+	if unixSeconds < 0 || level < 0 {
+		return time.Time{}, 0, errors.New("invalid VK rate state")
+	}
+	if unixSeconds == 0 {
+		return time.Time{}, level, nil
+	}
+	return time.Unix(unixSeconds, 0).UTC(), level, nil
+}
+
+func (store *MessageStore) SaveVKRateState(ctx context.Context, until time.Time, level int) error {
+	if level < 0 {
+		return errors.New("invalid VK flood level")
+	}
+	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	unixSeconds := until.Unix()
+	if until.IsZero() {
+		unixSeconds = 0
+	}
+	_, err := store.db.ExecContext(operation, `INSERT INTO vk_rate_state (singleton, cooldown_until, flood_level)
+VALUES (1, ?, ?)
+ON CONFLICT(singleton) DO UPDATE SET cooldown_until = excluded.cooldown_until, flood_level = excluded.flood_level`, unixSeconds, level)
+	if err != nil {
+		return safeTransferError(operation, "VK rate state save failed", err)
+	}
+	return nil
 }
 
 func (store *MessageStore) Lookup(ctx context.Context, vkID int64) (int64, error) {

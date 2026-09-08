@@ -71,6 +71,10 @@ func (relay *Relay) ReplayHistory(ctx context.Context, count int) error {
 		if err == nil {
 			break
 		}
+		var apiError *VKAPIError
+		if errors.As(err, &apiError) && (apiError.Code == 9 || apiError.Code == 29) {
+			return err
+		}
 		if !retryableVK(err) {
 			return err
 		}

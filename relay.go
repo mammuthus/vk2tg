@@ -212,7 +212,7 @@ func (relay *Relay) prepareMessage(ctx context.Context, message VKMessage) (Rend
 func retryableVK(err error) bool {
 	var apiError *VKAPIError
 	if errors.As(err, &apiError) {
-		return apiError.Code == 6 || apiError.Code == 9 || apiError.Code == 10
+		return apiError.Code == 6 || apiError.Code == 9 || apiError.Code == 10 || apiError.Code == 29
 	}
 	var httpError *VKHTTPError
 	if errors.As(err, &httpError) {

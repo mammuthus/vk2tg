@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -30,7 +31,7 @@ func TestHistoryReplay(t *testing.T) {
 				t.Error("incorrect latest-history request")
 			}
 			if historyCalls == 1 {
-				writeFixture(t, writer, `{"error":{"error_code":9,"error_msg":"too many requests"}}`)
+				writeFixture(t, writer, `{"error":{"error_code":6,"error_msg":"too many requests"}}`)
 				return
 			}
 			writeFixture(t, writer, `{"response":{"items":[{"id":3,"peer_id":2000000001,"from_id":42,"text":"new <&>"},{"id":2,"peer_id":2000000001,"from_id":73,"text":"blocked"},{"id":1,"peer_id":2000000001,"from_id":42,"out":1,"text":"owner"}]}}`)
@@ -63,6 +64,9 @@ func TestHistoryReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	vk.rate.maxRetries = vkAPIMaxRetries
+	vk.rate.clock = &fakeVKClock{now: time.Unix(1_900_000_000, 0)}
+	vk.rate.jitter = func(delay time.Duration) time.Duration { return delay }
 	telegram, err := NewTelegramClient(config, server.URL, time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +84,26 @@ func TestHistoryReplay(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "history message inspected") || !strings.Contains(logs.String(), "\"message_id\":1") || !strings.Contains(logs.String(), "\"outbox\":true") || !strings.Contains(logs.String(), "\"blocked_sender\":true") || !strings.Contains(logs.String(), "\"reason\":\"blocked_sender\"") {
 		t.Fatal("history diagnostics missing exact safe message facts")
+	}
+}
+
+func TestHistoryFloodStopsAfterOneRequest(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		writeFixture(t, writer, `{"error":{"error_code":9,"error_msg":"flood control"}}`)
+	}))
+	defer server.Close()
+	config := Config{VKAccessToken: "fake-token", VKTargetPeerID: 2000000001}
+	vk, err := NewVKClient(config, server.URL, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay := Relay{config: config, vk: vk, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	err = relay.ReplayHistory(t.Context(), 5)
+	var apiError *VKAPIError
+	if !errors.As(err, &apiError) || apiError.Code != 9 || requests != 1 {
+		t.Fatalf("history flood handling: requests=%d err=%v", requests, err)
 	}
 }
 

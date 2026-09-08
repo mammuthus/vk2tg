@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -93,6 +94,7 @@ type VKClient struct {
 	token      string
 	baseURL    string
 	httpClient *http.Client
+	rate       *vkRateGuard
 }
 
 type VKUser struct {
@@ -114,16 +116,23 @@ func NewVKClient(config Config, baseURL string, timeout time.Duration) (*VKClien
 	if timeout <= 0 {
 		return nil, errors.New("vk request timeout must be positive")
 	}
-	if baseURL == "" {
+	productionEndpoint := baseURL == ""
+	if productionEndpoint {
 		baseURL = "https://api.vk.com/method"
 	}
 	endpoint, err := url.Parse(baseURL)
 	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
 		return nil, errors.New("invalid vk API endpoint")
 	}
+	rate := newVKRateGuard()
+	if !productionEndpoint {
+		rate.minimum = 0
+		rate.maxRetries = 0
+	}
 	return &VKClient{
 		token:   config.VKAccessToken,
 		baseURL: strings.TrimRight(baseURL, "/"),
+		rate:    rate,
 		httpClient: &http.Client{
 			Timeout: timeout,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -131,6 +140,10 @@ func NewVKClient(config Config, baseURL string, timeout time.Duration) (*VKClien
 			},
 		},
 	}, nil
+}
+
+func (client *VKClient) ConfigureRateProtection(ctx context.Context, store vkRateStateStore, logger *slog.Logger) error {
+	return client.rate.configure(ctx, store, logger)
 }
 
 func (client *VKClient) UsersGet(ctx context.Context, userIDs []int64) ([]VKUser, error) {
@@ -162,6 +175,25 @@ func (client *VKClient) call(ctx context.Context, method string, parameters url.
 }
 
 func (client *VKClient) callVersion(ctx context.Context, method string, parameters url.Values, result any, version string) error {
+	for attempt := 0; ; attempt++ {
+		if err := client.rate.wait(ctx); err != nil {
+			return err
+		}
+		err := client.callVersionOnce(ctx, method, parameters, result, version)
+		if err == nil {
+			return client.rate.successful(ctx)
+		}
+		var apiError *VKAPIError
+		if errors.As(err, &apiError) && (apiError.Code == 9 || apiError.Code == 29) {
+			return errors.Join(err, client.rate.activateFlood(ctx))
+		}
+		if retryErr := client.rate.retry(ctx, attempt, err); retryErr != nil {
+			return retryErr
+		}
+	}
+}
+
+func (client *VKClient) callVersionOnce(ctx context.Context, method string, parameters url.Values, result any, version string) error {
 	parameters.Set("access_token", client.token)
 	parameters.Set("v", version)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/"+method, strings.NewReader(parameters.Encode()))

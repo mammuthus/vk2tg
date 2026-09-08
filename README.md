@@ -97,8 +97,9 @@ VK records, so an album or long message can produce multiple Telegram calls.
 
 SQLite stores the first successful Telegram message ID for each VK message.
 The mapping suppresses duplicate normal events and lets a later VK reply become
-a Telegram reply after restart. Use one `STATE_DB_PATH` per VK peer and Telegram
-destination.
+a Telegram reply after restart. SQLite also preserves an active VK flood
+cooldown so a process restart cannot bypass it. Use one `STATE_DB_PATH` per VK
+peer and Telegram destination.
 
 ## Docker
 

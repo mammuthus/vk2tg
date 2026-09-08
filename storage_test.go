@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func testMessageStore(t *testing.T) *MessageStore {
@@ -66,5 +67,29 @@ func TestMessageStorePersistence(t *testing.T) {
 	}
 	if err := store.Save(ctx, 43, 1002); !errors.Is(err, context.Canceled) {
 		t.Fatalf("save cancellation: %v", err)
+	}
+}
+
+func TestVKRateStatePersistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.sqlite")
+	store, err := OpenMessageStore(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantUntil := time.Unix(2_000_000_000, 0).UTC()
+	if err := store.SaveVKRateState(t.Context(), wantUntil, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenMessageStore(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	until, level, err := store.LoadVKRateState(t.Context())
+	if err != nil || !until.Equal(wantUntil) || level != 2 {
+		t.Fatalf("rate state not restored: until=%v level=%d err=%v", until, level, err)
 	}
 }
