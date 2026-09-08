@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 )
 
 func parseHistoryCommand(args []string) (int, error) {
@@ -59,19 +61,42 @@ func (client *VKClient) GetHistory(ctx context.Context, peerID int64, count int)
 }
 
 func (relay *Relay) ReplayHistory(ctx context.Context, count int) error {
-	messages, err := relay.vk.GetHistory(ctx, relay.config.VKTargetPeerID, count)
-	if err != nil {
-		return err
+	if relay.retryDelay <= 0 {
+		relay.retryDelay = 2 * time.Second
+	}
+	var messages []VKMessage
+	for {
+		var err error
+		messages, err = relay.vk.GetHistory(ctx, relay.config.VKTargetPeerID, count)
+		if err == nil {
+			break
+		}
+		if !retryableVK(err) {
+			return err
+		}
+		if err := relay.retry(ctx); err != nil {
+			return err
+		}
 	}
 	relay.logger.Info("history selected", "selected", len(messages), "requested", count, "dry_run", relay.config.DryRun)
 	sent, skipped := 0, 0
 	replayMap := make(map[int64]int64)
 	for index, message := range messages {
+		attachmentTypes := make([]string, 0, len(message.Attachments))
+		for _, attachment := range message.Attachments {
+			attachmentTypes = append(attachmentTypes, attachment.Type)
+		}
+		actionType := ""
+		if message.Action != nil {
+			actionType = message.Action.Type
+		}
+		_, blocked := relay.config.VKBlockedSenderIDs[message.FromID]
+		relay.logger.Info("history message inspected", "position", index+1, "message_id", message.ID, "sender_id", message.FromID, "peer_id", message.PeerID, "outbox", message.Out != 0, "text_nonempty", strings.TrimSpace(message.Text) != "", "action_type", actionType, "has_reply", message.ReplyMessage != nil, "attachment_types", attachmentTypes, "blocked_sender", blocked)
 		candidate := message
 		candidate.Out = 0
 		if !relay.accepts(candidate) {
 			skipped++
-			relay.logger.Info("history message skipped", "position", index+1)
+			relay.logger.Info("history message skipped", "position", index+1, "message_id", message.ID, "reason", relay.historySkipReason(candidate))
 			continue
 		}
 		rendered, accepted, err := relay.prepareMessage(ctx, message)
@@ -80,7 +105,11 @@ func (relay *Relay) ReplayHistory(ctx context.Context, count int) error {
 		}
 		if !accepted {
 			skipped++
-			relay.logger.Info("history message skipped", "position", index+1, "reason", "empty_content")
+			reason := "empty_content"
+			if message.Action != nil && strings.TrimSpace(message.Text) == "" && len(message.Attachments) == 0 {
+				reason = "empty_service_action"
+			}
+			relay.logger.Info("history message skipped", "position", index+1, "message_id", message.ID, "reason", reason)
 			continue
 		}
 		photos, documents := 0, 0
@@ -115,4 +144,17 @@ func (relay *Relay) ReplayHistory(ctx context.Context, count int) error {
 	}
 	relay.logger.Info("history replay complete", "selected", len(messages), "sent", sent, "skipped", skipped, "dry_run", relay.config.DryRun)
 	return nil
+}
+
+func (relay *Relay) historySkipReason(message VKMessage) string {
+	if message.PeerID != relay.config.VKTargetPeerID {
+		return "wrong_peer"
+	}
+	if message.FromID == 0 {
+		return "missing_sender"
+	}
+	if _, blocked := relay.config.VKBlockedSenderIDs[message.FromID]; blocked {
+		return "blocked_sender"
+	}
+	return "not_accepted"
 }
