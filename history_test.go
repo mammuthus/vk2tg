@@ -143,13 +143,13 @@ func TestHistoryMediaPipeline(t *testing.T) {
 							t.Error("invalid history album")
 							return
 						}
-						for _, item := range items {
-							if !strings.HasSuffix(item.Caption, relayFooter) || !strings.HasPrefix(item.Media, "attach://") {
-								t.Error("album bypasses normal upload/footer")
+						for index, item := range items {
+							if strings.Contains(item.Caption, relayFooter) || !strings.HasPrefix(item.Media, "attach://") || (index > 0 && item.Caption != "") {
+								t.Error("album has footer or bypasses normal upload")
 							}
 						}
-					} else if !strings.HasSuffix(caption, relayFooter) {
-						t.Error("missing history footer")
+					} else if strings.Contains(caption, relayFooter) {
+						t.Error("unexpected history footer")
 					}
 					if method == "sendPhoto" && (!strings.HasPrefix(caption, "<b>Sender</b> (<a href=\"https://vk.ru/wall-42_9\">репост</a>)\n\n") || !strings.Contains(caption, "wall &lt;text&gt;\nnext line") || strings.Count(caption, "https://vk.ru/wall-42_9") != 1) {
 						t.Error("history bypasses wall renderer")

@@ -37,8 +37,8 @@ func TestDeliveryCanonicalAndReply(t *testing.T) {
 						t.Error("invalid text request")
 					}
 					reply = payload.Reply
-					if !strings.HasSuffix(payload.Text, relayFooter) {
-						t.Error("lost continuation footer")
+					if strings.Contains(payload.Text, relayFooter) {
+						t.Error("unexpected continuation footer")
 					}
 				} else {
 					if request.ParseMultipartForm(1<<20) != nil {
@@ -113,7 +113,7 @@ func TestMediaDelivery(t *testing.T) {
 					var payload struct {
 						Text string `json:"text"`
 					}
-					if json.NewDecoder(request.Body).Decode(&payload) != nil || !strings.HasSuffix(payload.Text, relayFooter) {
+					if json.NewDecoder(request.Body).Decode(&payload) != nil || strings.Contains(payload.Text, relayFooter) {
 						t.Error("invalid continuation")
 					}
 				} else {
@@ -134,9 +134,9 @@ func TestMediaDelivery(t *testing.T) {
 							t.Error("invalid album")
 							return
 						}
-						for _, item := range items {
-							if !strings.HasSuffix(item.Caption, relayFooter) || !strings.HasPrefix(item.Media, "attach://") {
-								t.Error("missing album footer or upload")
+						for index, item := range items {
+							if strings.Contains(item.Caption, relayFooter) || !strings.HasPrefix(item.Media, "attach://") || (index > 0 && item.Caption != "") {
+								t.Error("unexpected album caption or missing upload")
 							}
 						}
 					} else {
@@ -144,7 +144,7 @@ func TestMediaDelivery(t *testing.T) {
 						if kind == "document" {
 							method = "sendDocument"
 						}
-						if !strings.HasSuffix(request.URL.Path, method) || !strings.HasSuffix(request.FormValue("caption"), relayFooter) {
+						if !strings.HasSuffix(request.URL.Path, method) || strings.Contains(request.FormValue("caption"), relayFooter) {
 							t.Error("invalid media method/caption")
 						}
 					}
@@ -285,15 +285,15 @@ func TestLargeAlbum(t *testing.T) {
 			if json.Unmarshal([]byte(request.FormValue("media")), &items) != nil || len(items) != 10 {
 				t.Error("incorrect album batch size")
 			}
-			for _, item := range items {
-				if !strings.HasSuffix(item.Caption, relayFooter) {
-					t.Error("missing album marker")
+			for index, item := range items {
+				if strings.Contains(item.Caption, relayFooter) || (index > 0 && item.Caption != "") {
+					t.Error("unexpected album caption")
 				}
 			}
 		} else if strings.HasSuffix(request.URL.Path, "sendPhoto") {
 			photos++
-			if !strings.HasSuffix(request.FormValue("caption"), relayFooter) {
-				t.Error("missing overflow marker")
+			if request.FormValue("caption") != "" {
+				t.Error("unexpected overflow caption")
 			}
 		} else {
 			t.Error("unexpected method")

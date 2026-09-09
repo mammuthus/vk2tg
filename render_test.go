@@ -7,9 +7,11 @@ import (
 	"testing"
 )
 
+const relayFooter = "отправлено через vk2tg"
+
 func TestRenderTextAndLimits(t *testing.T) {
 	chunks := renderChunks("A <B>", false, "hello <&>\nworld", 4096, "")
-	if len(chunks) != 1 || chunks[0] != "<b>A &lt;B&gt;</b>\n\nhello &lt;&amp;&gt;\nworld\n\nотправлено через vk2tg" {
+	if len(chunks) != 1 || chunks[0] != "<b>A &lt;B&gt;</b>\n\nhello &lt;&amp;&gt;\nworld" {
 		t.Fatalf("unexpected render: %q", chunks)
 	}
 	body := strings.Repeat("<&😀\n", 1600)
@@ -21,10 +23,10 @@ func TestRenderTextAndLimits(t *testing.T) {
 			limit = 1024
 		}
 		plain := html.UnescapeString(strings.ReplaceAll(strings.ReplaceAll(chunk, "<b>", ""), "</b>", ""))
-		if utf16Length(plain) > limit || !strings.HasSuffix(plain, "\n"+relayFooter) || strings.Count(plain, relayFooter) != 1 {
+		if utf16Length(plain) > limit || strings.Contains(plain, relayFooter) {
 			t.Fatal("invalid limit or footer")
 		}
-		content := strings.TrimSuffix(plain, "\n\n"+relayFooter)
+		content := plain
 		if index == 0 {
 			content = strings.TrimPrefix(content, "A (репост)\n\n")
 		}
@@ -32,6 +34,9 @@ func TestRenderTextAndLimits(t *testing.T) {
 	}
 	if recovered.String() != body {
 		t.Fatal("splitting lost or changed text")
+	}
+	if got := renderChunks("Sender", false, relayFooter, 4096, "")[0]; got != "<b>Sender</b>\n\n"+relayFooter {
+		t.Fatal("user text was removed instead of only the generated footer")
 	}
 }
 
@@ -61,7 +66,7 @@ func TestNestedWall(t *testing.T) {
 		t.Fatalf("nested wall lost content: %v", err)
 	}
 	caption := renderChunks(rendered.Name, rendered.Repost, rendered.Text, 1024, rendered.SourceURL)[0]
-	if !strings.Contains(caption, "original\n&lt;&amp;&gt;") || !strings.HasSuffix(caption, relayFooter) {
+	if !strings.Contains(caption, "original\n&lt;&amp;&gt;") || strings.Contains(caption, relayFooter) {
 		t.Fatal("nested wall rendered incorrectly")
 	}
 }
@@ -87,7 +92,7 @@ func TestRepostSourceHeader(t *testing.T) {
 				label = `<a href="` + html.EscapeString(test.source) + `">репост</a>`
 			}
 			chunks := renderChunks(rendered.Name, rendered.Repost, rendered.Text, 1024, rendered.SourceURL)
-			want := "<b>A &lt;B&gt;</b> (" + label + ")\n\nwall &lt;&amp;&gt;\nnext line\n\n" + relayFooter
+			want := "<b>A &lt;B&gt;</b> (" + label + ")\n\nwall &lt;&amp;&gt;\nnext line"
 			if len(chunks) != 1 || chunks[0] != want {
 				t.Fatal("incorrect header, escaping, content or footer")
 			}

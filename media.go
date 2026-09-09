@@ -65,7 +65,7 @@ func deliverMessage(ctx context.Context, telegram *TelegramClient, mediaHTTP *ht
 				end++
 			}
 		}
-		caption := "\n" + relayFooter
+		caption := ""
 		if first {
 			caption = chunks[0]
 		}
@@ -184,7 +184,7 @@ func (client *TelegramClient) sendFiles(ctx context.Context, directory string, f
 		field := file.Kind
 		if len(files) > 1 {
 			field = "media" + strconv.Itoa(index)
-			itemCaption := "\n" + relayFooter
+			itemCaption := ""
 			if index == 0 {
 				itemCaption = caption
 			}

@@ -56,7 +56,7 @@ func TestHistoryStickerLinkAndService(t *testing.T) {
 					}
 					defer request.MultipartForm.RemoveAll()
 					caption := request.FormValue("caption")
-					if strings.Count(caption, relayFooter) != 1 || strings.Contains(caption, "must not replace") {
+					if strings.Contains(caption, relayFooter) || strings.Contains(caption, "must not replace") {
 						t.Error("sticker caption/footer changed")
 					}
 					file, header, err := request.FormFile("photo")

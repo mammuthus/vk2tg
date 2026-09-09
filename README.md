@@ -124,7 +124,6 @@ Do not use `down -v` when state must be retained.
 
 ## Notes And Limitations
 
-- Every forwarded part includes `отправлено через vk2tg`.
 - Unknown attachment types use `[Unsupported attachment]`.
 - Empty service-only events are skipped; useful text or media is retained.
 - Sticker images are sent as Telegram photos, not Telegram stickers.

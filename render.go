@@ -7,8 +7,6 @@ import (
 	"unicode/utf8"
 )
 
-const relayFooter = "отправлено через vk2tg"
-
 type MediaSource struct {
 	Kind string
 	URL  string
@@ -147,12 +145,11 @@ func renderChunks(name string, repost bool, text string, firstLimit int, sourceU
 		suffix = " (<a href=\"" + html.EscapeString(sourceURL) + "\">репост</a>)\n\n"
 	}
 	header := "<b>" + html.EscapeString(name) + "</b>" + suffix
-	footer := "\n\n" + relayFooter
 	var chunks []string
 	limit := firstLimit
 	for {
-		part, remaining := takeUTF16(text, limit-headerLength-utf16Length(footer))
-		chunks = append(chunks, header+html.EscapeString(part)+footer)
+		part, remaining := takeUTF16(text, limit-headerLength)
+		chunks = append(chunks, header+html.EscapeString(part))
 		if remaining == "" {
 			return chunks
 		}
