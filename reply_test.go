@@ -85,7 +85,7 @@ func TestRelayPersistentReplies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			telegram, err := NewTelegramClient(config, server.URL, time.Second)
+			telegram, err := newTestTelegramClient(config, server.URL, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -139,7 +139,7 @@ func TestCanonicalMappingForMedia(t *testing.T) {
 				writeFixture(t, writer, fmt.Sprintf(`{"ok":true,"result":{"message_id":%d}}`, 500+calls))
 			}))
 			defer server.Close()
-			telegram, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
+			telegram, err := newTestTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -224,7 +224,7 @@ func TestHistoryMappingIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	telegram, err := NewTelegramClient(config, server.URL, time.Second)
+	telegram, err := newTestTelegramClient(config, server.URL, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

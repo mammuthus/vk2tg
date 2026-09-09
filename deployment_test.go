@@ -61,7 +61,7 @@ func TestDeploymentVolumePersistence(t *testing.T) {
 		writeFixture(t, writer, `{"ok":true,"result":{"message_id":1002}}`)
 	}))
 	defer server.Close()
-	telegram, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
+	telegram, err := newTestTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

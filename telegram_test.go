@@ -59,15 +59,15 @@ func TestTelegramSendMessage(t *testing.T) {
 		writeFixture(t, writer, `{"ok":true,"result":{"message_id":1}}`)
 	}))
 	defer server.Close()
-	client, err := NewTelegramClient(Config{TelegramBotToken: "fake-bot-token", TelegramTargetChatID: -123}, server.URL, time.Second*5)
+	client, err := newTestTelegramClient(Config{TelegramBotToken: "fake-bot-token", TelegramTargetChatID: -123}, server.URL, time.Second*5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	started := time.Now()
+	started := client.pacer.now()
 	if _, err := client.SendMessage(t.Context(), "hello", 0); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 2 || time.Since(started) < time.Second {
+	if calls != 2 || client.pacer.now().Sub(started) < time.Second {
 		t.Fatal("429 was not delayed and retried")
 	}
 }
@@ -83,7 +83,7 @@ func TestTelegramReplyAndMessageID(t *testing.T) {
 		writeFixture(t, writer, `{"ok":true,"result":{"message_id":654}}`)
 	}))
 	defer server.Close()
-	client, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
+	client, err := newTestTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestTelegramRejectsMissingIdentifiers(t *testing.T) {
 				writeFixture(t, writer, `{"ok":true,"result":`+result+`}`)
 			}))
 			defer server.Close()
-			client, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
+			client, err := newTestTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,7 +116,7 @@ func TestTelegramSafeTransportAndJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writeFixture(t, writer, "invalid fake-bot-token JSON")
 	}))
-	client, err := NewTelegramClient(Config{TelegramBotToken: "fake-bot-token", TelegramTargetChatID: -123}, server.URL, time.Second)
+	client, err := newTestTelegramClient(Config{TelegramBotToken: "fake-bot-token", TelegramTargetChatID: -123}, server.URL, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestTelegramRateLimitCancellation(t *testing.T) {
 		cancel()
 	}))
 	defer server.Close()
-	client, err := NewTelegramClient(Config{TelegramBotToken: "fake-bot-token", TelegramTargetChatID: -123}, server.URL, time.Second)
+	client, err := newTestTelegramClient(Config{TelegramBotToken: "fake-bot-token", TelegramTargetChatID: -123}, server.URL, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestTelegramErrors(t *testing.T) {
 				writeFixture(t, writer, `{"ok":false,"error_code":400,"description":"fake-bot-token"}`)
 			}))
 			defer server.Close()
-			client, err := NewTelegramClient(Config{TelegramBotToken: "fake-bot-token", TelegramTargetChatID: -123}, server.URL, time.Second)
+			client, err := newTestTelegramClient(Config{TelegramBotToken: "fake-bot-token", TelegramTargetChatID: -123}, server.URL, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}

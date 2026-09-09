@@ -28,7 +28,7 @@ func TestStickerImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered, err := normalizeMessage(message, "Sender")
-	if err != nil || len(rendered.Media) != 1 || rendered.Media[0].Kind != "photo" || rendered.Media[0].URL != "https://example.test/background.png" || rendered.UnsupportedAttachments != 0 {
+	if err != nil || len(rendered.Media) != 1 || rendered.Media[0].Kind != "sticker" || rendered.Media[0].URL != "https://example.test/512.png" || rendered.UnsupportedAttachments != 0 {
 		t.Fatalf("sticker selection failed: %v", err)
 	}
 	message.Attachments[0].Sticker.ImagesWithBackground = nil

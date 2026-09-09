@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ func TestDeliveryCanonicalAndReply(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			client, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
+			client, err := newTestTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -171,7 +172,7 @@ func TestMediaDelivery(t *testing.T) {
 				writeTelegramSuccess(t, writer, request)
 			}))
 			defer server.Close()
-			client, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
+			client, err := newTestTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -236,7 +237,7 @@ func TestMediaRateLimitReplay(t *testing.T) {
 		writeTelegramSuccess(t, writer, request)
 	}))
 	defer server.Close()
-	client, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, 3*time.Second)
+	client, err := newTestTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, 3*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +302,7 @@ func TestLargeAlbum(t *testing.T) {
 		writeTelegramSuccess(t, writer, request)
 	}))
 	defer server.Close()
-	client, err := NewTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
+	client, err := newTestTelegramClient(Config{TelegramBotToken: "fake-token", TelegramTargetChatID: -123}, server.URL, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,5 +315,30 @@ func TestLargeAlbum(t *testing.T) {
 	}
 	if groups != 1 || photos != 1 {
 		t.Fatal("incorrect album batching")
+	}
+}
+
+func TestStickerFilenameFromSignature(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body []byte
+		want string
+	}{
+		{"PNG", transparentStickerPNG(t), "sticker.png"},
+		{"WebP", []byte("RIFF\x00\x00\x00\x00WEBPVP8L"), "sticker.webp"},
+		{"GIF", []byte("GIF89a"), "sticker.gif"},
+		{"JPEG", []byte{0xff, 0xd8, 0xff}, "sticker.jpg"},
+		{"not an image", []byte("<html>error</html>"), ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "opaque-download-name")
+			if err := os.WriteFile(file, test.body, 0600); err != nil {
+				t.Fatal(err)
+			}
+			name, err := stickerFilename(file)
+			if name != test.want || (err != nil) != (test.want == "") {
+				t.Fatalf("name=%s err=%v", name, err)
+			}
+		})
 	}
 }

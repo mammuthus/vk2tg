@@ -55,6 +55,12 @@ func deliverMessage(ctx context.Context, telegram *TelegramClient, mediaHTTP *ht
 		if err != nil {
 			return 0, err
 		}
+		if source.Kind == "sticker" {
+			source.Name, err = stickerFilename(path)
+			if err != nil {
+				return 0, err
+			}
+		}
 		files = append(files, localMedia{MediaSource: source, Path: path})
 	}
 	first := true
@@ -170,8 +176,11 @@ func (client *TelegramClient) sendFiles(ctx context.Context, directory string, f
 	method := "sendPhoto"
 	if len(files) > 1 {
 		method = "sendMediaGroup"
-	} else if files[0].Kind == "document" {
+	} else if files[0].Kind == "document" || files[0].Kind == "sticker" {
 		method = "sendDocument"
+	}
+	if files[0].Kind == "sticker" && writer.WriteField("disable_content_type_detection", "true") != nil {
+		return 0, errors.New("cannot encode sticker upload")
 	}
 	type albumItem struct {
 		Type      string `json:"type"`
@@ -182,6 +191,9 @@ func (client *TelegramClient) sendFiles(ctx context.Context, directory string, f
 	var album []albumItem
 	for index, file := range files {
 		field := file.Kind
+		if field == "sticker" {
+			field = "document"
+		}
 		if len(files) > 1 {
 			field = "media" + strconv.Itoa(index)
 			itemCaption := ""
@@ -217,7 +229,32 @@ func (client *TelegramClient) sendFiles(ctx context.Context, directory string, f
 	if writer.Close() != nil {
 		return 0, errors.New("cannot finalize upload")
 	}
-	return client.send(ctx, method, writer.FormDataContentType(), body)
+	return client.sendWithCost(ctx, method, writer.FormDataContentType(), body, len(files))
+}
+
+func stickerFilename(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", errors.New("cannot inspect sticker image")
+	}
+	defer file.Close()
+	var header [512]byte
+	count, err := io.ReadFull(file, header[:])
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return "", errors.New("cannot read sticker image header")
+	}
+	switch http.DetectContentType(header[:count]) {
+	case "image/png":
+		return "sticker.png", nil
+	case "image/webp":
+		return "sticker.webp", nil
+	case "image/gif":
+		return "sticker.gif", nil
+	case "image/jpeg":
+		return "sticker.jpg", nil
+	default:
+		return "", errors.New("unsupported sticker image format")
+	}
 }
 
 func safeFilename(name string) string {

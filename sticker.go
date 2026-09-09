@@ -22,15 +22,18 @@ func (sticker *VKSticker) imageURL() string {
 	if sticker == nil {
 		return ""
 	}
-	var best VKStickerImage
-	for _, images := range [][]VKStickerImage{sticker.ImagesWithBackground, sticker.Images} {
+	for _, images := range [][]VKStickerImage{sticker.Images, sticker.ImagesWithBackground} {
+		var best VKStickerImage
 		for _, image := range images {
 			if image.URL != "" && image.Width > 0 && image.Height > 0 && (best.URL == "" || float64(image.Width)*float64(image.Height) > float64(best.Width)*float64(best.Height)) {
 				best = image
 			}
 		}
+		if best.URL != "" {
+			return best.URL
+		}
 	}
-	return best.URL
+	return ""
 }
 
 func messageStickers(message VKMessage) ([]*VKSticker, error) {

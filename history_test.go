@@ -67,7 +67,7 @@ func TestHistoryReplay(t *testing.T) {
 	vk.rate.maxRetries = vkAPIMaxRetries
 	vk.rate.clock = &fakeVKClock{now: time.Unix(1_900_000_000, 0)}
 	vk.rate.jitter = func(delay time.Duration) time.Duration { return delay }
-	telegram, err := NewTelegramClient(config, server.URL, time.Second)
+	telegram, err := newTestTelegramClient(config, server.URL, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestHistoryMediaPipeline(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			telegram, err := NewTelegramClient(config, server.URL, time.Second)
+			telegram, err := newTestTelegramClient(config, server.URL, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}

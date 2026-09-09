@@ -19,6 +19,7 @@ type TelegramClient struct {
 	chatID     int64
 	httpClient *http.Client
 	logger     *slog.Logger
+	pacer      *telegramPacer
 }
 
 type TelegramError struct {
@@ -46,6 +47,7 @@ func NewTelegramClient(config Config, baseURL string, timeout time.Duration) (*T
 		endpoint:   strings.TrimRight(baseURL, "/") + "/bot" + config.TelegramBotToken,
 		chatID:     config.TelegramTargetChatID,
 		httpClient: &http.Client{Timeout: timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
+		pacer:      newTelegramPacer(),
 	}, nil
 }
 
@@ -75,12 +77,26 @@ func (client *TelegramClient) SendMessage(ctx context.Context, text string, repl
 }
 
 func (client *TelegramClient) send(ctx context.Context, method, contentType string, body io.ReadSeeker) (int64, error) {
+	return client.sendWithCost(ctx, method, contentType, body, 1)
+}
+
+func (client *TelegramClient) sendWithCost(ctx context.Context, method, contentType string, body io.ReadSeeker, messages int) (int64, error) {
+	if messages < 1 || messages > 10 {
+		return 0, errors.New("invalid telegram message count")
+	}
+	if err := client.pacer.acquire(ctx); err != nil {
+		return 0, err
+	}
+	defer client.pacer.release()
 	for {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
 		if _, err := body.Seek(0, io.SeekStart); err != nil {
 			return 0, errors.New("telegram request rewind failed")
+		}
+		if err := client.pacer.reserve(ctx, messages); err != nil {
+			return 0, err
 		}
 		identifier, err := client.sendOnce(ctx, method, contentType, body)
 		var failure *TelegramError
@@ -91,8 +107,9 @@ func (client *TelegramClient) send(ctx context.Context, method, contentType stri
 		if delay <= 0 {
 			delay = time.Second
 		}
-		if err := pause(ctx, delay); err != nil {
-			return 0, err
+		client.pacer.postpone(delay)
+		if client.logger != nil {
+			client.logger.Warn("telegram rate limited; retry scheduled", "retry_after", delay)
 		}
 	}
 }
@@ -144,7 +161,10 @@ func (client *TelegramClient) sendOnce(ctx context.Context, method, contentType 
 		return 0, errors.New("invalid telegram response")
 	}
 	type sentMessage struct {
-		ID int64 `json:"message_id"`
+		ID   int64 `json:"message_id"`
+		Chat struct {
+			Type string `json:"type"`
+		} `json:"chat"`
 	}
 	var messages []sentMessage
 	if method == "sendMediaGroup" {
@@ -163,6 +183,7 @@ func (client *TelegramClient) sendOnce(ctx context.Context, method, contentType 
 			return 0, errors.New("missing telegram message identifier")
 		}
 	}
+	client.pacer.observeChat(messages[0].Chat.Type, len(messages))
 	if client.logger != nil {
 		client.logger.Info("telegram send confirmed", "method", method, "message_count", len(messages))
 	}

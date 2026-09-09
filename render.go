@@ -82,7 +82,7 @@ func normalizeMessage(message VKMessage, name string) (RenderedMessage, error) {
 				if address == "" {
 					return ErrVKInvalidResponse
 				}
-				result.Media = append(result.Media, MediaSource{Kind: "photo", URL: address, Name: "sticker.png"})
+				result.Media = append(result.Media, MediaSource{Kind: "sticker", URL: address, Name: "sticker.png"})
 			case "link":
 				if attachment.Link == nil || strings.TrimSpace(attachment.Link.URL) == "" {
 					return ErrVKInvalidResponse

@@ -82,7 +82,7 @@ func TestRelayEndToEnd(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			telegram, err := NewTelegramClient(config, server.URL, time.Second)
+			telegram, err := newTestTelegramClient(config, server.URL, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -293,7 +293,7 @@ func TestRelayWallPhoto(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	telegram, err := NewTelegramClient(config, server.URL, time.Second)
+	telegram, err := newTestTelegramClient(config, server.URL, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

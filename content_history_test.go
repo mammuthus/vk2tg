@@ -15,6 +15,7 @@ import (
 )
 
 func TestHistoryStickerLinkAndService(t *testing.T) {
+	stickerBytes := transparentStickerPNG(t)
 	for _, dry := range []bool{false, true} {
 		t.Run(fmt.Sprint(dry), func(t *testing.T) {
 			var methods []string
@@ -45,11 +46,15 @@ func TestHistoryStickerLinkAndService(t *testing.T) {
 					writeFixture(t, writer, fmt.Sprintf(`{"response":{"items":[{"id":1,"peer_id":2000000001,"from_id":42,"text":"must not replace original content","attachments":[{"type":"sticker","sticker":{"inner_type":"base_sticker","sticker_id":10,"product_id":20,"is_allowed":true,"images":[{"url":%q,"width":64,"height":64},{"url":%q,"width":512,"height":512}],"images_with_background":[{"url":%q,"width":512,"height":512}]}}]}]}}`, server.URL+"/small", server.URL+"/transparent", server.URL+"/sticker"))
 				case "/users.get":
 					writeFixture(t, writer, `{"response":[{"id":42,"first_name":"Sender","last_name":""}]}`)
-				case "/photo", "/sticker":
+				case "/photo":
 					downloads++
 					writeFixture(t, writer, "image-bytes")
-				case "/botfake-token/sendPhoto":
-					methods = append(methods, "sendPhoto")
+				case "/transparent":
+					downloads++
+					writer.Write(stickerBytes)
+				case "/botfake-token/sendPhoto", "/botfake-token/sendDocument":
+					method := strings.TrimPrefix(request.URL.Path, "/botfake-token/")
+					methods = append(methods, method)
 					if request.ParseMultipartForm(1<<20) != nil {
 						t.Error("invalid photo multipart")
 						return
@@ -59,14 +64,18 @@ func TestHistoryStickerLinkAndService(t *testing.T) {
 					if strings.Contains(caption, relayFooter) || strings.Contains(caption, "must not replace") {
 						t.Error("sticker caption/footer changed")
 					}
-					file, header, err := request.FormFile("photo")
+					field := "photo"
+					if method == "sendDocument" {
+						field = "document"
+					}
+					file, header, err := request.FormFile(field)
 					if err != nil {
 						t.Error("missing uploaded image")
 						return
 					}
 					file.Close()
 					if len(methods) == 1 && header.Filename != "sticker.png" {
-						t.Error("sticker did not use photo pipeline")
+						t.Error("sticker did not use original PNG document")
 					}
 					writeTelegramSuccess(t, writer, request)
 				case "/botfake-token/sendMessage":
@@ -93,7 +102,7 @@ func TestHistoryStickerLinkAndService(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			telegram, err := NewTelegramClient(config, server.URL, time.Second)
+			telegram, err := newTestTelegramClient(config, server.URL, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -109,7 +118,7 @@ func TestHistoryStickerLinkAndService(t *testing.T) {
 				if downloads != 0 || len(methods) != 0 {
 					t.Fatal("dry-run downloaded or sent media")
 				}
-			} else if downloads != 2 || !reflect.DeepEqual(methods, []string{"sendPhoto", "sendMessage", "sendMessage", "sendPhoto", "sendMessage", "sendMessage"}) {
+			} else if downloads != 2 || !reflect.DeepEqual(methods, []string{"sendDocument", "sendMessage", "sendMessage", "sendPhoto", "sendMessage", "sendMessage"}) {
 				t.Fatal("incorrect delivery order/count")
 			}
 			if !strings.Contains(logs.String(), `"skipped":2`) {
