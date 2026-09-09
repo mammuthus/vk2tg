@@ -52,7 +52,7 @@ func TestHistoryStickerLinkAndService(t *testing.T) {
 				case "/transparent":
 					downloads++
 					writer.Write(stickerBytes)
-				case "/botfake-token/sendPhoto", "/botfake-token/sendDocument":
+				case "/botfake-token/sendPhoto":
 					method := strings.TrimPrefix(request.URL.Path, "/botfake-token/")
 					methods = append(methods, method)
 					if request.ParseMultipartForm(1<<20) != nil {
@@ -64,18 +64,14 @@ func TestHistoryStickerLinkAndService(t *testing.T) {
 					if strings.Contains(caption, relayFooter) || strings.Contains(caption, "must not replace") {
 						t.Error("sticker caption/footer changed")
 					}
-					field := "photo"
-					if method == "sendDocument" {
-						field = "document"
-					}
-					file, header, err := request.FormFile(field)
+					file, header, err := request.FormFile("photo")
 					if err != nil {
 						t.Error("missing uploaded image")
 						return
 					}
 					file.Close()
 					if len(methods) == 1 && header.Filename != "sticker.png" {
-						t.Error("sticker did not use original PNG document")
+						t.Error("sticker did not upload original PNG as photo")
 					}
 					writeTelegramSuccess(t, writer, request)
 				case "/botfake-token/sendMessage":
@@ -118,7 +114,7 @@ func TestHistoryStickerLinkAndService(t *testing.T) {
 				if downloads != 0 || len(methods) != 0 {
 					t.Fatal("dry-run downloaded or sent media")
 				}
-			} else if downloads != 2 || !reflect.DeepEqual(methods, []string{"sendDocument", "sendMessage", "sendMessage", "sendPhoto", "sendMessage", "sendMessage"}) {
+			} else if downloads != 2 || !reflect.DeepEqual(methods, []string{"sendPhoto", "sendMessage", "sendMessage", "sendPhoto", "sendMessage", "sendMessage"}) {
 				t.Fatal("incorrect delivery order/count")
 			}
 			if !strings.Contains(logs.String(), `"skipped":2`) {

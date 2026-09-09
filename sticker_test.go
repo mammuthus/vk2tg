@@ -47,7 +47,7 @@ func TestStickerPrefersUnbackedImage(t *testing.T) {
 	}
 }
 
-func TestStickerTransparencyThroughDelivery(t *testing.T) {
+func TestStickerTransparentAssetThroughPhotoUpload(t *testing.T) {
 	stickerBytes := transparentStickerPNG(t)
 	photoBytes := []byte("ordinary-photo-unchanged")
 	var methods []string
@@ -76,11 +76,10 @@ func TestStickerTransparencyThroughDelivery(t *testing.T) {
 		if err := json.Unmarshal([]byte(request.FormValue("reply_parameters")), &reply); err != nil || reply.MessageID != 77 || !reply.AllowSendingWithoutReply {
 			t.Error("sticker/photo reply changed")
 		}
-		field := "photo"
-		if request.URL.Path == "/botfake-token/sendDocument" {
-			field = "document"
+		if request.URL.Path != "/botfake-token/sendPhoto" || request.FormValue("disable_content_type_detection") != "" {
+			t.Error("sticker must use photo upload without document options")
 		}
-		file, header, err := request.FormFile(field)
+		file, header, err := request.FormFile("photo")
 		if err != nil {
 			t.Error(err)
 			return
@@ -91,8 +90,8 @@ func TestStickerTransparencyThroughDelivery(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		if field == "document" {
-			if header.Filename != "sticker.png" || !bytes.Equal(body, stickerBytes) || request.FormValue("disable_content_type_detection") != "true" {
+		if len(methods) == 1 {
+			if header.Filename != "sticker.png" || !bytes.Equal(body, stickerBytes) {
 				t.Error("sticker bytes or upload mode changed")
 			}
 			bitmap, err := png.Decode(bytes.NewReader(body))
@@ -141,7 +140,7 @@ func TestStickerTransparencyThroughDelivery(t *testing.T) {
 	if err != nil || canonical != 101 {
 		t.Fatalf("delivery failed: id=%d err=%v", canonical, err)
 	}
-	if !reflect.DeepEqual(methods, []string{"/botfake-token/sendDocument", "/botfake-token/sendPhoto"}) {
+	if !reflect.DeepEqual(methods, []string{"/botfake-token/sendPhoto", "/botfake-token/sendPhoto"}) {
 		t.Fatalf("unexpected methods: %v", methods)
 	}
 	if !reflect.DeepEqual(captions, []string{"<b>Sender</b>\n\n", ""}) {

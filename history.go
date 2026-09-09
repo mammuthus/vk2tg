@@ -119,9 +119,9 @@ func (relay *Relay) ReplayHistory(ctx context.Context, count int) error {
 		photos, documents := 0, 0
 		for _, media := range rendered.Media {
 			switch media.Kind {
-			case "photo":
+			case "photo", "sticker":
 				photos++
-			case "document", "sticker":
+			case "document":
 				documents++
 			}
 		}

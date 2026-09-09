@@ -176,11 +176,8 @@ func (client *TelegramClient) sendFiles(ctx context.Context, directory string, f
 	method := "sendPhoto"
 	if len(files) > 1 {
 		method = "sendMediaGroup"
-	} else if files[0].Kind == "document" || files[0].Kind == "sticker" {
+	} else if files[0].Kind == "document" {
 		method = "sendDocument"
-	}
-	if files[0].Kind == "sticker" && writer.WriteField("disable_content_type_detection", "true") != nil {
-		return 0, errors.New("cannot encode sticker upload")
 	}
 	type albumItem struct {
 		Type      string `json:"type"`
@@ -192,7 +189,7 @@ func (client *TelegramClient) sendFiles(ctx context.Context, directory string, f
 	for index, file := range files {
 		field := file.Kind
 		if field == "sticker" {
-			field = "document"
+			field = "photo"
 		}
 		if len(files) > 1 {
 			field = "media" + strconv.Itoa(index)
