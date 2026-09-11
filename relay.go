@@ -11,15 +11,16 @@ import (
 )
 
 type Relay struct {
-	config      Config
-	vk          *VKClient
-	telegram    *TelegramClient
-	mediaHTTP   *http.Client
-	logger      *slog.Logger
-	tempRoot    string
-	retryDelay  time.Duration
-	senderNames map[int64]string
-	store       *MessageStore
+	config         Config
+	vk             *VKClient
+	telegram       *TelegramClient
+	mediaHTTP      *http.Client
+	logger         *slog.Logger
+	tempRoot       string
+	retryDelay     time.Duration
+	senderNames    map[int64]string
+	store          *MessageStore
+	migrationClock vkClock
 }
 
 func (relay *Relay) Run(ctx context.Context) error {

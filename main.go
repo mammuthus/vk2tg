@@ -30,7 +30,7 @@ func main() {
 	}
 	defer stop()
 	logger.InfoContext(ctx, "vk2tg started", "dry_run", config.DryRun, "history_count", historyCount)
-	if err := runRelay(ctx, config, logger, historyCount); err != nil && !errors.Is(err, context.Canceled) {
+	if err := runRelay(ctx, config, logger, historyCount); err != nil && (historyCount == -1 || !errors.Is(err, context.Canceled)) {
 		stop()
 		logger.Error("relay stopped", "error", err)
 		os.Exit(1)
@@ -63,6 +63,10 @@ func runRelay(ctx context.Context, config Config, logger *slog.Logger, historyCo
 	if historyCount > 0 {
 		telegram.logger = logger
 		return relay.ReplayHistory(ctx, historyCount)
+	}
+	if historyCount == -1 {
+		telegram.logger = logger
+		return relay.MigrateHistory(ctx)
 	}
 	return relay.Run(ctx)
 }

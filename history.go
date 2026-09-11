@@ -15,6 +15,9 @@ func parseHistoryCommand(args []string) (int, error) {
 	if len(args) == 0 {
 		return 0, nil
 	}
+	if len(args) == 1 && args[0] == "migrate-history" {
+		return -1, nil
+	}
 	if args[0] != "test-history" {
 		return 0, errors.New("unknown command; use test-history --count N")
 	}

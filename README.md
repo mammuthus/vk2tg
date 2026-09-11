@@ -126,6 +126,52 @@ for that child process:
 Replay never writes normal persistent mappings. The requested count is source
 VK records, so an album or long message can produce multiple Telegram calls.
 
+## Full History Migration
+
+Use `./vk2tg migrate-history` with `DRY_RUN=false` for a persistent, resumable
+full transfer. Stop the live relay first and back up SQLite. Never run migration
+and live delivery concurrently. The command does not clear existing mappings:
+mapped messages are skipped. If the Telegram destination was emptied, only an
+explicitly authorized reset of obsolete message mappings should precede a fresh
+migration. Preserve VK cooldown state and the SQLite volume.
+
+Migration calls `messages.getHistory` with `rev=1` and offset pagination,
+processing up to 50 records oldest-first. A one-record overlap validates each
+page boundary, including after resume. Shrinking history or a shifted boundary
+stops the operation instead of silently skipping records. Do not delete source
+history during migration. The first page logs the accessible count and estimated
+batch count; newly appended records observed by subsequent pages are included.
+The final page completes the observed history; messages arriving during the
+handoff to live mode remain subject to the non-durable Long Poll cursor limit.
+
+The normal filtering, enrichment, rendering, media, Telegram pacing and reply
+pipeline is reused. One client/name cache spans all batches. No Long Poll server
+request is made by the migration. Code 6 uses the existing VK client backoff;
+VK 9/29 persists the cooldown and immediately terminates the transfer. There is
+at least a 60-second pause before the next batch. Each batch that encounters a
+Telegram 429 increases subsequent batch pauses by another 60 seconds; the
+Telegram limiter also honors every `retry_after` within the batch. The next
+allowed batch time is persisted, so restarting cannot bypass that pause.
+
+`history_migration` stores the source/destination identity, offset, boundary ID,
+counts, pending delivery ID and pause deadline. Every fully delivered VK message
+gets a canonical `message_map` entry before its progress checkpoint is advanced.
+Replies use those newly rebuilt persistent mappings. Skipped records advance
+the progress checkpoint but do not create Telegram mappings. Batch logs include
+VK ID range, sent/skipped/failed counts, VK/Telegram request/error/retry counters,
+elapsed duration and the next pause.
+
+Resume by running the same command with the same state, source and destination.
+Completed mappings are not resent. A pending delivery with a persisted mapping
+is recovered without sending again. A pending delivery without a mapping stops
+for manual reconciliation: Telegram may have accepted it, or part of a multipart
+message, before the process lost its response or SQLite commit. Bot API does not
+provide an idempotency key, so automatic exactly-once recovery of that ambiguous
+case cannot be guaranteed. Do not blindly remove a pending marker or reset
+progress. A completed migration is a no-op on rerun. Restore normal live operation
+only after the migration reports completion; an interrupted migration exits
+unsuccessfully and must be resumed or reconciled first.
+
 ## Persistent State And Replies
 
 SQLite stores the first successful Telegram message ID for each VK message.

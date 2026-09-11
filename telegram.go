@@ -20,6 +20,7 @@ type TelegramClient struct {
 	httpClient *http.Client
 	logger     *slog.Logger
 	pacer      *telegramPacer
+	stats      requestStats
 }
 
 type TelegramError struct {
@@ -91,7 +92,7 @@ func (client *TelegramClient) sendWithCost(ctx context.Context, method, contentT
 		return 0, err
 	}
 	defer client.pacer.release()
-	for {
+	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
@@ -103,7 +104,14 @@ func (client *TelegramClient) sendWithCost(ctx context.Context, method, contentT
 			return 0, err
 		}
 		trace(ctx, "telegram request started")
+		client.stats.calls.Add(1)
+		if attempt > 0 {
+			client.stats.retries.Add(1)
+		}
 		identifier, err := client.sendOnce(ctx, method, contentType, body)
+		if err != nil {
+			client.stats.errors.Add(1)
+		}
 		traceFailure(ctx, "telegram request", err)
 		if err == nil {
 			trace(ctx, "telegram request succeeded", "telegram_message_id", identifier)
@@ -113,6 +121,7 @@ func (client *TelegramClient) sendWithCost(ctx context.Context, method, contentT
 			return identifier, err
 		}
 		delay := failure.RetryAfter
+		client.stats.rateLimits.Add(1)
 		if delay <= 0 {
 			delay = time.Second
 		}

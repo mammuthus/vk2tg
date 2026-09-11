@@ -95,6 +95,7 @@ type VKClient struct {
 	baseURL    string
 	httpClient *http.Client
 	rate       *vkRateGuard
+	stats      requestStats
 }
 
 type VKUser struct {
@@ -182,12 +183,17 @@ func (client *VKClient) callVersion(ctx context.Context, method string, paramete
 			return err
 		}
 		trace(ctx, "vk API request started", "attempt", attempt+1)
+		client.stats.calls.Add(1)
+		if attempt > 0 {
+			client.stats.retries.Add(1)
+		}
 		err := client.callVersionOnce(ctx, method, parameters, result, version)
 		if err == nil {
 			trace(ctx, "vk API request succeeded", "attempt", attempt+1)
 			return client.rate.successful(ctx)
 		}
 		traceFailure(ctx, "vk API request", err, "attempt", attempt+1)
+		client.stats.errors.Add(1)
 		var apiError *VKAPIError
 		if errors.As(err, &apiError) && (apiError.Code == 9 || apiError.Code == 29) {
 			return errors.Join(err, client.rate.activateFlood(ctx))
