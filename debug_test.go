@@ -19,7 +19,7 @@ func TestDebugTrace(t *testing.T) {
 		photo, telegramFailure, mediaFailure, rateLimit, quiet bool
 	}{
 		{name: "accepted"},
-		{name: "outbox", flags: 2, photo: true, reason: "outbox"},
+		{name: "outbox accepted", flags: 2, photo: true},
 		{name: "wrong peer", peer: 2000000002, photo: true, reason: "wrong_peer"},
 		{name: "blocklist", sender: 73, photo: true, reason: "blocked_sender"},
 		{name: "media", photo: true},
@@ -58,7 +58,7 @@ func TestDebugTrace(t *testing.T) {
 					writeFixture(t, writer, fmt.Sprintf(`{"ts":"11","updates":[[4,99,%d,%d,123,"private-message-text",%s,%s]]}`, testCase.flags, peer, extra, hints))
 				case "/messages.getById":
 					fullCalls++
-					writeFixture(t, writer, fmt.Sprintf(`{"response":{"items":[{"id":99,"peer_id":2000000001,"from_id":42,"text":"private-full-text","reply_message":{"id":98},"attachments":[{"type":"photo","photo":{"sizes":[{"url":%q,"width":100,"height":100}]}}]}]}}`, server.URL+"/private-media-url"))
+					writeFixture(t, writer, fmt.Sprintf(`{"response":{"items":[{"id":99,"peer_id":2000000001,"from_id":42,"out":%d,"text":"private-full-text","reply_message":{"id":98},"attachments":[{"type":"photo","photo":{"sizes":[{"url":%q,"width":100,"height":100}]}}]}]}}`, (testCase.flags&2)>>1, server.URL+"/private-media-url"))
 				case "/users.get":
 					writeFixture(t, writer, `{"response":[{"id":42,"first_name":"PrivateName"}]}`)
 				case "/private-media-url":
@@ -151,6 +151,14 @@ func TestDebugTrace(t *testing.T) {
 			}
 			requireEvent("message filters accepted")
 			requireEvent("message normalized")
+			if testCase.flags&2 != 0 {
+				if requireEvent("message event parsed")["outbox"] != float64(1) || requireEvent("getById succeeded")["outbox"] != float64(1) {
+					t.Fatal("outbox metadata lost")
+				}
+				if strings.Contains(output.String(), `"reason":"outbox"`) || fullCalls != 1 || downloads != 1 || sends != 1 {
+					t.Fatal("outbox photo/reply was not relayed exactly once")
+				}
+			}
 			if testCase.photo {
 				requireEvent("getById succeeded")
 				requireEvent("reply mapping resolved")
@@ -213,7 +221,7 @@ func TestDebugParsingAndEnrichmentFilters(t *testing.T) {
 		wantFull            int
 	}{
 		{name: "empty service", event: `[4,99,0,2000000001,123,"",{"from":"42","source_act":"private-action"},{}]`, reason: "empty_service_event"},
-		{name: "enriched outbox", event: `[4,99,0,2000000001,123,"private-text",{"from":"42","reply":"private-reply"},{}]`, reason: "outbox", wantFull: 1},
+		{name: "enriched outbox accepted", event: `[4,99,0,2000000001,123,"private-text",{"from":"42","reply":"private-reply"},{}]`, wantFull: 1},
 		{name: "duplicate", event: `[4,99,0,2000000001,123,"private-text",{"from":"42"},{"attach1_type":"photo"}]`, reason: "duplicate_mapping", duplicate: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -240,12 +248,12 @@ func TestDebugParsingAndEnrichmentFilters(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			relay := Relay{config: config, vk: vk, store: store, logger: slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+			relay := Relay{config: config, vk: vk, store: store, senderNames: map[int64]string{42: "Cached Sender"}, logger: slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))}
 			_, accepted, err := relay.prepare(t.Context(), json.RawMessage(testCase.event))
-			if err != nil || accepted || fullCalls != testCase.wantFull {
-				t.Fatal("skip behavior changed")
+			if err != nil || accepted != (testCase.reason == "") || fullCalls != testCase.wantFull {
+				t.Fatal("unexpected filter decision")
 			}
-			if !strings.Contains(output.String(), `"reason":"`+testCase.reason+`"`) {
+			if testCase.reason != "" && !strings.Contains(output.String(), `"reason":"`+testCase.reason+`"`) {
 				t.Fatal("missing skip reason")
 			}
 			if strings.Contains(output.String(), "private-") {

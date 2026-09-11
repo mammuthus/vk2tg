@@ -6,7 +6,7 @@ delivery.
 
 ## Features
 
-- VK User Long Poll for new inbound messages
+- VK User Long Poll for new messages, including the token account's own messages
 - One configured VK peer to one Telegram chat or channel
 - Text messages, photos, photo albums, documents, and stickers
 - Wall reposts with a linked source label when a source URL is available
@@ -96,11 +96,10 @@ handled. `failed_1` advances to the server-provided cursor without processing
 updates; `failed_2` refreshes the key while preserving the cursor; `failed_3`
 resumes from current events. Numeric cursors are logged, not persisted.
 
-The current live filter still rejects `Out != 0` (Long Poll flags bit 2),
-including messages authored by the token's VK account in the target chat.
-This inherited inbound-only rule is not required to prevent loops in this
-one-way architecture and conflicts with forwarding all target-chat messages.
-Debug logging deliberately leaves that behavior unchanged for diagnosis.
+The live filter accepts target-chat messages regardless of `Out` (Long Poll
+flags bit 2), including messages authored by the token's VK account. Outbox
+remains visible in debug metadata but is not a skip reason. Wrong-peer,
+sender-blocklist, and empty-service filters still apply.
 
 ## Historical Replay
 

@@ -25,7 +25,9 @@ func TestRelayEndToEnd(t *testing.T) {
 	}{
 		{name: "ordinary text", peer: 2000000001, sender: 42, wantSend: 1},
 		{name: "wrong peer", peer: 2000000002, sender: 42, attachments: `{"attach1_type":"photo"}`},
-		{name: "outbox", peer: 2000000001, sender: 42, flags: 2, attachments: `{"attach1_type":"photo"}`},
+		{name: "outbox accepted", peer: 2000000001, sender: 42, flags: 2, wantSend: 1},
+		{name: "outbox wrong peer", peer: 2000000002, sender: 42, flags: 2, attachments: `{"attach1_type":"photo"}`},
+		{name: "outbox blocked sender", peer: 2000000001, sender: 73, flags: 2, attachments: `{"attach1_type":"photo"}`},
 		{name: "blocked sender", peer: 2000000001, sender: 73, attachments: `{"attach1_type":"photo"}`},
 		{name: "dry run", peer: 2000000001, sender: 42, dry: true},
 		{name: "dry run attachment", peer: 2000000001, sender: 42, dry: true, attachments: `{"attach1_type":"photo"}`, wantFull: 1},

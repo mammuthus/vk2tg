@@ -136,7 +136,6 @@ func (relay *Relay) acceptsContext(ctx context.Context, message VKMessage) bool 
 	}{
 		{"missing_message_id", message.ID != 0},
 		{"wrong_peer", message.PeerID == relay.config.VKTargetPeerID},
-		{"outbox", message.Out == 0},
 		{"missing_sender", message.FromID != 0},
 		{"blocked_sender", !blocked},
 	} {
