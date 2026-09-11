@@ -50,11 +50,15 @@ func deliverMessage(ctx context.Context, telegram *TelegramClient, mediaHTTP *ht
 		}
 	}()
 	files := make([]localMedia, 0, len(message.Media))
-	for _, source := range message.Media {
-		path, err := downloadMedia(ctx, mediaHTTP, directory, source)
+	for index, source := range message.Media {
+		mediaCtx := debugContext(ctx, nil, "media_index", index, "media_type", safeAttachmentType(source.Kind))
+		trace(mediaCtx, "media download started")
+		path, err := downloadMedia(mediaCtx, mediaHTTP, directory, source)
 		if err != nil {
+			traceFailure(mediaCtx, "media download", err)
 			return 0, err
 		}
+		trace(mediaCtx, "media download succeeded")
 		if source.Kind == "sticker" {
 			source.Name, err = stickerFilename(path)
 			if err != nil {
@@ -115,6 +119,8 @@ func downloadMedia(ctx context.Context, client *http.Client, directory string, s
 		if !retry {
 			return path, err
 		}
+		traceFailure(ctx, "media download attempt", err)
+		trace(ctx, "media download retry", "delay", 2*time.Second)
 		if err := pause(ctx, 2*time.Second); err != nil {
 			return "", err
 		}
@@ -132,6 +138,7 @@ func downloadAttempt(ctx context.Context, client *http.Client, address, path str
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		trace(ctx, "media HTTP response", "http_status", response.StatusCode)
 		return response.StatusCode == 429 || response.StatusCode >= 500, fmt.Errorf("media HTTP status %d", response.StatusCode)
 	}
 	if response.ContentLength > maximum {
@@ -153,6 +160,7 @@ func downloadAttempt(ctx context.Context, client *http.Client, address, path str
 	if count == 0 || count > maximum {
 		return false, errors.New("empty or oversized media")
 	}
+	trace(ctx, "media bytes downloaded", "bytes", count)
 	return false, nil
 }
 

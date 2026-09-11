@@ -113,29 +113,37 @@ ON CONFLICT(singleton) DO UPDATE SET cooldown_until = excluded.cooldown_until, f
 }
 
 func (store *MessageStore) Lookup(ctx context.Context, vkID int64) (int64, error) {
+	trace(ctx, "mapping lookup started", "lookup_vk_id", vkID)
 	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var telegramID int64
 	err := store.db.QueryRowContext(operation, "SELECT telegram_message_id FROM message_map WHERE vk_message_id = ?", vkID).Scan(&telegramID)
 	if errors.Is(err, sql.ErrNoRows) {
+		trace(ctx, "mapping lookup result", "lookup_vk_id", vkID, "present", false)
 		return 0, nil
 	}
 	if err != nil {
+		traceFailure(ctx, "mapping lookup", err, "lookup_vk_id", vkID)
 		return 0, safeTransferError(operation, "state mapping lookup failed", err)
 	}
+	trace(ctx, "mapping lookup result", "lookup_vk_id", vkID, "present", true, "telegram_message_id", telegramID)
 	return telegramID, nil
 }
 
 func (store *MessageStore) Save(ctx context.Context, vkID, telegramID int64) error {
+	trace(ctx, "mapping save started", "mapping_vk_id", vkID, "telegram_message_id", telegramID)
 	if vkID <= 0 || telegramID <= 0 {
 		return errors.New("invalid message mapping identifiers")
 	}
 	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_, err := store.db.ExecContext(operation, "INSERT INTO message_map (vk_message_id, telegram_message_id) VALUES (?, ?) ON CONFLICT(vk_message_id) DO NOTHING", vkID, telegramID)
+	result, err := store.db.ExecContext(operation, "INSERT INTO message_map (vk_message_id, telegram_message_id) VALUES (?, ?) ON CONFLICT(vk_message_id) DO NOTHING", vkID, telegramID)
 	if err != nil {
+		traceFailure(ctx, "mapping save", err, "mapping_vk_id", vkID)
 		return safeTransferError(operation, "state mapping save failed", err)
 	}
+	rows, rowsErr := result.RowsAffected()
+	trace(ctx, "mapping save succeeded", "mapping_vk_id", vkID, "telegram_message_id", telegramID, "inserted", rows > 0, "rows_known", rowsErr == nil)
 	return nil
 }
 

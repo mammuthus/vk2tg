@@ -175,14 +175,19 @@ func (client *VKClient) call(ctx context.Context, method string, parameters url.
 }
 
 func (client *VKClient) callVersion(ctx context.Context, method string, parameters url.Values, result any, version string) error {
+	ctx = debugContext(ctx, nil, "vk_method", method, "vk_api_version", version)
 	for attempt := 0; ; attempt++ {
 		if err := client.rate.wait(ctx); err != nil {
+			traceFailure(ctx, "vk pacing", err)
 			return err
 		}
+		trace(ctx, "vk API request started", "attempt", attempt+1)
 		err := client.callVersionOnce(ctx, method, parameters, result, version)
 		if err == nil {
+			trace(ctx, "vk API request succeeded", "attempt", attempt+1)
 			return client.rate.successful(ctx)
 		}
+		traceFailure(ctx, "vk API request", err, "attempt", attempt+1)
 		var apiError *VKAPIError
 		if errors.As(err, &apiError) && (apiError.Code == 9 || apiError.Code == 29) {
 			return errors.Join(err, client.rate.activateFlood(ctx))

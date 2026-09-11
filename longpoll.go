@@ -127,6 +127,10 @@ func (client *VKClient) GetMessageByID(ctx context.Context, identifier int64) (V
 }
 
 func decodeLongPollMessage(raw json.RawMessage) (VKMessage, bool, error) {
+	return decodeLongPollMessageContext(context.Background(), raw)
+}
+
+func decodeLongPollMessageContext(ctx context.Context, raw json.RawMessage) (VKMessage, bool, error) {
 	var event []json.RawMessage
 	if json.Unmarshal(raw, &event) != nil || len(event) == 0 {
 		return VKMessage{}, false, ErrVKInvalidResponse
@@ -136,8 +140,10 @@ func decodeLongPollMessage(raw json.RawMessage) (VKMessage, bool, error) {
 		return VKMessage{}, false, ErrVKInvalidResponse
 	}
 	if eventType != 4 {
+		trace(ctx, "event skipped", "reason", "not_message_event", "event_type", eventType)
 		return VKMessage{}, false, nil
 	}
+	trace(ctx, "message event received", "event_type", eventType)
 	if len(event) < 8 {
 		return VKMessage{}, false, ErrVKInvalidResponse
 	}
@@ -164,11 +170,18 @@ func decodeLongPollMessage(raw json.RawMessage) (VKMessage, bool, error) {
 		message.FromID = message.PeerID
 	}
 	_, service := extra["source_act"]
-	if service && strings.TrimSpace(message.Text) == "" && len(attachments) == 0 {
+	_, forwarded := extra["fwd"]
+	_, replied := extra["reply"]
+	trace(ctx, "message event parsed", "peer_id", message.PeerID, "sender_id", message.FromID, "outbox", message.Out,
+		"attachment_hint_count", len(attachments), "attachment_hint_types", attachmentHintTypes(attachments),
+		"reply_present", replied, "forward_present", forwarded, "action_present", service,
+		"get_by_id_needed", len(attachments) != 0 || forwarded || replied || service)
+	emptyService := service && strings.TrimSpace(message.Text) == "" && len(attachments) == 0
+	trace(ctx, "filter decision", "predicate", "empty_service_event", "passed", !emptyService)
+	if emptyService {
+		trace(ctx, "message skipped", "stage", "parsing", "reason", "empty_service_event")
 		return VKMessage{}, false, nil
 	}
 	message.Text = html.UnescapeString(strings.ReplaceAll(message.Text, "<br>", "\n"))
-	_, forwarded := extra["fwd"]
-	_, replied := extra["reply"]
 	return message, len(attachments) != 0 || forwarded || replied || service, nil
 }

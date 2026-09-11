@@ -103,6 +103,7 @@ func (guard *vkRateGuard) wait(ctx context.Context) error {
 		}
 		delay := allowed.Sub(now)
 		guard.mu.Unlock()
+		trace(ctx, "vk pacing wait", "delay", delay)
 		if err := guard.clock.Wait(ctx, delay); err != nil {
 			return err
 		}
@@ -123,6 +124,7 @@ func (guard *vkRateGuard) retry(ctx context.Context, attempt int, err error) err
 		delay = 30 * time.Second
 	}
 	delay = guard.jitter(delay)
+	trace(ctx, "vk API retry scheduled", "delay", delay, "attempt", attempt+1)
 	guard.logger.Warn("VK API rate limited, retry in", "delay", delay)
 	return guard.clock.Wait(ctx, delay)
 }

@@ -63,10 +63,44 @@ shell or Compose file supplies them.
 | `TELEGRAM_TARGET_CHAT_ID` | Yes | `-1001234567890` |
 | `VK_BLOCKED_SENDER_IDS` | No | Comma-separated VK sender IDs; empty by default |
 | `DRY_RUN` | No | `true` by default; use `false` to send to Telegram |
+| `DEBUG` | No | `false` by default; set `true` for metadata-only processing traces |
 | `STATE_DB_PATH` | No | `state/vk2tg.sqlite` by default |
 
 Keep real credentials in a private `.env` file. Do not enable shell tracing
 when loading it.
+
+## Debug Logging
+
+Set `DEBUG=true` in the runtime environment (the local `.env` for Compose),
+then recreate only the `vk2tg` service to apply it. `DEBUG=false` preserves
+the compact operational logs. Debug does not change filters, retries, or
+delivery behavior; use `DRY_RUN=true` separately to suppress Telegram delivery.
+Dry-run still performs accepted-message enrichment and sender lookups, but
+does not download media, send to Telegram, or save message mappings.
+
+Debug JSON records carry `vk_message_id`, `batch_id`, `event_index`,
+`ts_before`, and `ts_after` through live processing. They report parsing,
+attachment/reply hints, each reached filter predicate, exact skip reasons,
+VK API attempts, normalization counts, reply lookup, media downloads,
+Telegram method/pacing/response/retry, canonical IDs, and mapping results.
+Reply target IDs become available after full-message enrichment; raw Long Poll
+reply hints are not dumped. Unknown attachment types are logged as `unknown`.
+Errors expose stage, category and available numeric API/HTTP codes, not raw
+error strings. Logs contain no message text, sender names, tokens, Long Poll
+keys, media URLs, filenames, or binary payloads. IDs and cursors are still
+sensitive metadata: restrict log access and disable debug after diagnosis.
+
+`long poll batch complete` and `long poll ts advanced` occur only after all
+events in a successful batch have been handled. Filtered events count as
+handled. `failed_1` advances to the server-provided cursor without processing
+updates; `failed_2` refreshes the key while preserving the cursor; `failed_3`
+resumes from current events. Numeric cursors are logged, not persisted.
+
+The current live filter still rejects `Out != 0` (Long Poll flags bit 2),
+including messages authored by the token's VK account in the target chat.
+This inherited inbound-only rule is not required to prevent loops in this
+one-way architecture and conflicts with forwarding all target-chat messages.
+Debug logging deliberately leaves that behavior unchanged for diagnosis.
 
 ## Historical Replay
 

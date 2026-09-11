@@ -23,11 +23,14 @@ type Relay struct {
 }
 
 func (relay *Relay) Run(ctx context.Context) error {
+	ctx = relay.debugContext(ctx)
+	trace(ctx, "relay debug enabled", "dry_run", relay.config.DryRun)
 	if relay.retryDelay <= 0 {
 		relay.retryDelay = 2 * time.Second
 	}
 	relay.senderNames = make(map[int64]string)
 	var server VKLongPollServer
+	var batchID uint64
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -47,10 +50,12 @@ func (relay *Relay) Run(ctx context.Context) error {
 				fresh.TS = server.TS
 			}
 			server = fresh
+			trace(ctx, "long poll cursor acquired", "ts", safeTS(server.TS))
 			relay.logger.Info("vk long poll connected")
 		}
 		batch, err := relay.vk.WaitLongPoll(ctx, server)
 		if err != nil {
+			traceFailure(ctx, "long poll wait", err, "ts", safeTS(server.TS))
 			if !retryableVK(err) && !errors.Is(err, ErrVKInvalidJSON) && !errors.Is(err, ErrVKInvalidResponse) {
 				return err
 			}
@@ -59,32 +64,41 @@ func (relay *Relay) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		batchID++
+		batchCtx := relay.debugContext(ctx, "batch_id", batchID, "ts_before", safeTS(server.TS), "ts_after", safeTS(batch.TS))
+		trace(batchCtx, "long poll batch received", "updates", len(batch.Updates), "failed", batch.Failed)
 		switch batch.Failed {
 		case 0:
 		case 1:
 			server.TS = batch.TS
+			trace(batchCtx, "long poll ts advanced", "reason", "failed_1")
 			continue
 		case 2:
 			server.Key = ""
+			trace(batchCtx, "long poll key refresh", "ts_preserved", true)
 			continue
 		case 3:
+			trace(batchCtx, "long poll cursor reset", "reason", "failed_3")
 			relay.logger.Warn("long poll cursor expired; resuming from current events")
 			server = VKLongPollServer{}
 			continue
 		default:
 			return errors.New("unsupported vk long poll protocol response")
 		}
-		for _, event := range batch.Updates {
+		for index, event := range batch.Updates {
+			eventCtx := eventContext(relay.debugContext(batchCtx, "event_index", index), event)
 			var message RenderedMessage
 			var accepted bool
 			for {
-				message, accepted, err = relay.prepare(ctx, event)
+				message, accepted, err = relay.prepare(eventCtx, event)
 				if err == nil {
 					break
 				}
 				if !retryableVK(err) {
+					traceFailure(eventCtx, "batch processing", err, "ts_advanced", false)
 					return err
 				}
+				traceFailure(eventCtx, "message preparation retry", err)
 				if err := relay.retry(ctx); err != nil {
 					return err
 				}
@@ -93,33 +107,57 @@ func (relay *Relay) Run(ctx context.Context) error {
 				continue
 			}
 			if relay.config.DryRun {
+				trace(eventCtx, "delivery skipped", "reason", "dry_run")
 				relay.logger.Info("would relay message", "media_count", len(message.Media), "repost", message.Repost)
 				continue
 			}
-			if err := relay.deliverMapped(ctx, message); err != nil {
+			if err := relay.deliverMapped(eventCtx, message); err != nil {
+				traceFailure(eventCtx, "batch processing", err, "ts_advanced", false)
 				return err
 			}
 			relay.logger.Info("message relayed", "media_count", len(message.Media), "repost", message.Repost)
 		}
 		server.TS = batch.TS
+		trace(batchCtx, "long poll batch complete", "updates", len(batch.Updates))
+		trace(batchCtx, "long poll ts advanced", "reason", "batch_complete")
 		relay.logger.Info("vk long poll cycle complete", "updates", len(batch.Updates))
 	}
 }
 
 func (relay *Relay) accepts(message VKMessage) bool {
-	if message.ID == 0 || message.PeerID != relay.config.VKTargetPeerID || message.Out != 0 || message.FromID == 0 {
-		return false
-	}
+	return relay.acceptsContext(context.Background(), message)
+}
+
+func (relay *Relay) acceptsContext(ctx context.Context, message VKMessage) bool {
 	_, blocked := relay.config.VKBlockedSenderIDs[message.FromID]
-	return !blocked
+	for _, check := range []struct {
+		reason string
+		passed bool
+	}{
+		{"missing_message_id", message.ID != 0},
+		{"wrong_peer", message.PeerID == relay.config.VKTargetPeerID},
+		{"outbox", message.Out == 0},
+		{"missing_sender", message.FromID != 0},
+		{"blocked_sender", !blocked},
+	} {
+		trace(ctx, "filter decision", "predicate", check.reason, "passed", check.passed)
+		if !check.passed {
+			trace(ctx, "message skipped", "reason", check.reason)
+			return false
+		}
+	}
+	trace(ctx, "message filters accepted")
+	return true
 }
 
 func (relay *Relay) prepare(ctx context.Context, event json.RawMessage) (RenderedMessage, bool, error) {
-	message, needsFull, err := decodeLongPollMessage(event)
+	ctx = eventContext(relay.debugContext(ctx), event)
+	message, needsFull, err := decodeLongPollMessageContext(ctx, event)
 	if err != nil {
+		traceFailure(ctx, "message parsing", err)
 		return RenderedMessage{}, false, err
 	}
-	if !relay.accepts(message) {
+	if !relay.acceptsContext(debugContext(ctx, nil, "stage", "initial_filters"), message) {
 		return RenderedMessage{}, false, nil
 	}
 	if relay.store != nil {
@@ -128,15 +166,19 @@ func (relay *Relay) prepare(ctx context.Context, event json.RawMessage) (Rendere
 			return RenderedMessage{}, false, err
 		}
 		if identifier != 0 {
+			trace(ctx, "message skipped", "reason", "duplicate_mapping", "telegram_message_id", identifier)
 			return RenderedMessage{}, false, nil
 		}
 	}
 	if needsFull {
+		trace(ctx, "getById started")
 		message, err = relay.vk.GetMessageByID(ctx, message.ID)
 		if err != nil {
+			traceFailure(ctx, "getById", err)
 			return RenderedMessage{}, false, err
 		}
-		if !relay.accepts(message) {
+		traceMessage(ctx, "getById succeeded", message)
+		if !relay.acceptsContext(debugContext(ctx, nil, "stage", "enriched_filters"), message) {
 			return RenderedMessage{}, false, nil
 		}
 	}
@@ -144,6 +186,7 @@ func (relay *Relay) prepare(ctx context.Context, event json.RawMessage) (Rendere
 }
 
 func (relay *Relay) deliverMapped(ctx context.Context, message RenderedMessage) error {
+	ctx = relay.debugContext(ctx, "vk_message_id", message.VKMessageID)
 	if relay.config.DryRun {
 		return nil
 	}
@@ -155,6 +198,7 @@ func (relay *Relay) deliverMapped(ctx context.Context, message RenderedMessage) 
 		return err
 	}
 	if existing != 0 {
+		trace(ctx, "delivery skipped", "reason", "duplicate_mapping", "telegram_message_id", existing)
 		return nil
 	}
 	if message.VKReplyToID > 0 {
@@ -163,22 +207,36 @@ func (relay *Relay) deliverMapped(ctx context.Context, message RenderedMessage) 
 			return err
 		}
 	}
+	trace(ctx, "reply mapping resolved", "reply_vk_id", message.VKReplyToID, "reply_telegram_id", message.TelegramReplyID)
 	canonical, err := deliverMessage(ctx, relay.telegram, relay.mediaHTTP, relay.tempRoot, message)
 	if err != nil {
+		traceFailure(ctx, "delivery", err)
 		return err
 	}
+	trace(ctx, "canonical telegram message", "telegram_message_id", canonical)
 	return relay.store.Save(ctx, message.VKMessageID, canonical)
 }
 
 func (relay *Relay) prepareMessage(ctx context.Context, message VKMessage) (RenderedMessage, bool, error) {
+	ctx = relay.debugContext(ctx, "vk_message_id", message.ID)
+	trace(ctx, "sticker enrichment started")
 	if err := relay.vk.enrichStickers(ctx, message); err != nil {
+		traceFailure(ctx, "sticker enrichment", err)
 		return RenderedMessage{}, false, err
 	}
+	traceMessage(ctx, "enrichment complete", message)
 	rendered, err := normalizeMessage(message, "")
 	if err != nil {
+		traceFailure(ctx, "normalization", err)
 		return RenderedMessage{}, false, err
 	}
+	types := make([]string, 0, len(rendered.Media))
+	for _, media := range rendered.Media {
+		types = append(types, safeAttachmentType(media.Kind))
+	}
+	trace(ctx, "message normalized", "text_utf16_units", utf16Length(rendered.Text), "media_types", types, "media_count", len(types), "reply_vk_id", rendered.VKReplyToID)
 	if strings.TrimSpace(rendered.Text) == "" && len(rendered.Media) == 0 {
+		trace(ctx, "message skipped", "reason", "empty_normalized_content")
 		return RenderedMessage{}, false, nil
 	}
 	if relay.senderNames == nil {
@@ -188,8 +246,10 @@ func (relay *Relay) prepareMessage(ctx context.Context, message VKMessage) (Rend
 	if name == "" {
 		name = "VK community"
 		if message.FromID > 0 {
+			trace(ctx, "sender lookup started")
 			users, err := relay.vk.UsersGet(ctx, []int64{message.FromID})
 			if err != nil {
+				traceFailure(ctx, "sender lookup", err)
 				return RenderedMessage{}, false, err
 			}
 			if len(users) != 1 || users[0].ID != message.FromID {
@@ -206,6 +266,7 @@ func (relay *Relay) prepareMessage(ctx context.Context, message VKMessage) (Rend
 		relay.senderNames[message.FromID] = name
 	}
 	rendered.Name = name
+	trace(ctx, "message prepared", "accepted", true)
 	return rendered, true, nil
 }
 

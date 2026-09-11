@@ -21,11 +21,13 @@ func newTelegramPacer() *telegramPacer {
 }
 
 func (pacer *telegramPacer) acquire(ctx context.Context) error {
+	trace(ctx, "telegram pacer acquire started")
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	select {
 	case pacer.gate <- struct{}{}:
+		trace(ctx, "telegram pacer acquired")
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -39,6 +41,7 @@ func (pacer *telegramPacer) reserve(ctx context.Context, messages int) error {
 		return err
 	}
 	if delay := pacer.next.Sub(pacer.now()); delay > 0 {
+		trace(ctx, "telegram pacing wait", "delay", delay)
 		if err := pacer.wait(ctx, delay); err != nil {
 			return err
 		}
@@ -47,6 +50,7 @@ func (pacer *telegramPacer) reserve(ctx context.Context, messages int) error {
 		return err
 	}
 	pacer.next = pacer.now().Add(time.Duration(messages) * pacer.interval)
+	trace(ctx, "telegram pacing reserved", "message_count", messages, "interval", pacer.interval)
 	return nil
 }
 

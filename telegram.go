@@ -81,10 +81,13 @@ func (client *TelegramClient) send(ctx context.Context, method, contentType stri
 }
 
 func (client *TelegramClient) sendWithCost(ctx context.Context, method, contentType string, body io.ReadSeeker, messages int) (int64, error) {
+	ctx = debugContext(ctx, nil, "telegram_method", method)
+	trace(ctx, "telegram method selected", "message_count", messages)
 	if messages < 1 || messages > 10 {
 		return 0, errors.New("invalid telegram message count")
 	}
 	if err := client.pacer.acquire(ctx); err != nil {
+		traceFailure(ctx, "telegram pacer acquire", err)
 		return 0, err
 	}
 	defer client.pacer.release()
@@ -96,9 +99,15 @@ func (client *TelegramClient) sendWithCost(ctx context.Context, method, contentT
 			return 0, errors.New("telegram request rewind failed")
 		}
 		if err := client.pacer.reserve(ctx, messages); err != nil {
+			traceFailure(ctx, "telegram pacing", err)
 			return 0, err
 		}
+		trace(ctx, "telegram request started")
 		identifier, err := client.sendOnce(ctx, method, contentType, body)
+		traceFailure(ctx, "telegram request", err)
+		if err == nil {
+			trace(ctx, "telegram request succeeded", "telegram_message_id", identifier)
+		}
 		var failure *TelegramError
 		if !errors.As(err, &failure) || (failure.Code != 429 && failure.HTTPStatus != 429) {
 			return identifier, err
@@ -108,6 +117,7 @@ func (client *TelegramClient) sendWithCost(ctx context.Context, method, contentT
 			delay = time.Second
 		}
 		client.pacer.postpone(delay)
+		trace(ctx, "telegram retry scheduled", "retry_after", delay)
 		if client.logger != nil {
 			client.logger.Warn("telegram rate limited; retry scheduled", "retry_after", delay)
 		}
@@ -137,6 +147,7 @@ func (client *TelegramClient) sendOnce(ctx context.Context, method, contentType 
 		return 0, safeTransferError(ctx, "telegram transport failed", err)
 	}
 	defer response.Body.Close()
+	trace(ctx, "telegram HTTP response", "http_status", response.StatusCode)
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil {
 		return 0, safeTransferError(ctx, "telegram response read failed", err)

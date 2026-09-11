@@ -13,6 +13,7 @@ type Config struct {
 	TelegramTargetChatID int64
 	VKBlockedSenderIDs   map[int64]struct{}
 	DryRun               bool
+	Debug                bool
 	StateDBPath          string
 }
 
@@ -55,6 +56,12 @@ func loadConfig(getenv func(string) string) (Config, error) {
 		config.DryRun, err = strconv.ParseBool(value)
 		if err != nil {
 			return Config{}, fmt.Errorf("DRY_RUN must be a boolean")
+		}
+	}
+	if value := strings.TrimSpace(getenv("DEBUG")); value != "" {
+		config.Debug, err = strconv.ParseBool(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("DEBUG must be a boolean")
 		}
 	}
 	return config, nil

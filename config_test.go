@@ -13,6 +13,7 @@ func TestLoadConfigValid(t *testing.T) {
 		"TELEGRAM_TARGET_CHAT_ID": "-1001234567890",
 		"VK_BLOCKED_SENDER_IDS":   "42, 73,42,-12",
 		"DRY_RUN":                 "false",
+		"DEBUG":                   "true",
 		"STATE_DB_PATH":           "custom.sqlite",
 	}
 	config, err := loadConfig(func(key string) string { return testingEnvironment[key] })
@@ -27,6 +28,9 @@ func TestLoadConfigValid(t *testing.T) {
 	}
 	if config.DryRun {
 		t.Error("explicit false did not disable dry run")
+	}
+	if !config.Debug {
+		t.Error("explicit true did not enable debug")
 	}
 	if config.StateDBPath != "custom.sqlite" {
 		t.Error("state database path not loaded")
@@ -66,6 +70,7 @@ func TestLoadConfigValidation(t *testing.T) {
 		{name: "trailing blocklist comma", key: "VK_BLOCKED_SENDER_IDS", value: "42,", wantErr: true},
 		{name: "zero blocked sender", key: "VK_BLOCKED_SENDER_IDS", value: "0", wantErr: true},
 		{name: "invalid dry run", key: "DRY_RUN", value: "private-invalid-input", wantErr: true},
+		{name: "invalid debug", key: "DEBUG", value: "private-invalid-input", wantErr: true},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -124,6 +129,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 			}
 			if config.DryRun != testCase.wantDryRun {
 				t.Errorf("dry run = %v, want %v", config.DryRun, testCase.wantDryRun)
+			}
+			if config.Debug {
+				t.Error("debug must default to false")
 			}
 			if config.StateDBPath != "state/vk2tg.sqlite" {
 				t.Error("unexpected default state path")

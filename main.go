@@ -12,7 +12,8 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	var level slog.LevelVar
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: &level}))
 	historyCount, err := parseHistoryCommand(os.Args[1:])
 	if err != nil {
 		logger.Error("command rejected", "error", err)
@@ -24,6 +25,9 @@ func main() {
 		os.Exit(1)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	if config.Debug {
+		level.Set(slog.LevelDebug)
+	}
 	defer stop()
 	logger.InfoContext(ctx, "vk2tg started", "dry_run", config.DryRun, "history_count", historyCount)
 	if err := runRelay(ctx, config, logger, historyCount); err != nil && !errors.Is(err, context.Canceled) {
