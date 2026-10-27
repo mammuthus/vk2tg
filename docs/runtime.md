@@ -15,13 +15,19 @@ values are required even in dry-run mode. IDs are nonzero signed decimal int64s.
 | `VK_BLOCKED_SENDER_IDS` | No | Empty; comma-separated numeric VK sender IDs |
 | `DRY_RUN` | No | `true`; set `false` for Telegram delivery |
 | `DEBUG` | No | `false`; set `true` for structured processing traces |
+| `VK_FETCH_FULL_MESSAGES` | No | `false`; fetch source metadata, including `conversation_message_id`, via getById for every accepted unmapped live message |
 | `STATE_DB_PATH` | No | `state/vk2tg.sqlite` |
+| `PLUGINS` | No | Empty; comma-separated names of compiled-in observers, live delivery only |
+| `PLUGIN_TIMEOUT_SECONDS` | No | `10`; plugin lifecycle/handler timeout, 1–60 seconds |
+| `METRICS_LISTEN_ADDR` | No | `127.0.0.1:9091`; only used by the enabled `metrics` observer |
+| `METRICS_HOST_PORT` | No | `9091`; localhost host port in `compose.metrics.yaml` |
 
 Keep credentials private; use [.env.example](../.env.example) as the template.
 Never enable shell tracing or publish resolved Compose environments. Dry-run
 still opens SQLite, uses VK rate protection, enriches messages and looks up
 senders. It does not download media, send to Telegram or save message mappings.
-It is not an offline test mode.
+It is not an offline test mode. Plugins are not started in dry-run or history
+modes. See [Plugins](plugins.md) for registration and local-only extensions.
 
 ## Message Processing
 
@@ -55,6 +61,16 @@ implement delivery:
 All media is downloaded before sending a message. A later multipart send failure
 can still leave partial Telegram output without a mapping.
 
+If a media URL returns HTTP 403/404, live delivery, replay and migration retry
+up to three times after 2/4/8 seconds. Before each retry, `messages.getById`
+refreshes media URLs through the existing VK limiter. Original text and reply
+are retained; changed attachment counts/types or failed message filters stop
+the retry. These retries occur only before any Telegram send. Cancellation,
+VK refresh errors (including flood 9/29), or exhaustion propagate to the caller;
+no durable live queue is added. Existing media transport/429/5xx retries and
+Telegram `retry_after` handling remain unchanged. Other Telegram errors and
+partial sends are not retried by this mechanism.
+
 ## SQLite And Delivery Guarantees
 
 [storage.go](../storage.go) uses pure-Go `modernc.org/sqlite`, one connection and
@@ -69,7 +85,13 @@ a five-second busy timeout. Tables are initialized by the application:
 Live delivery and full migration save the first primary Telegram message ID
 only after the complete VK message is delivered. Replies and duplicate checks
 survive restarts. Use one database per source/destination; do not share it
-between simultaneous delivery processes.
+between simultaneous delivery processes. Observers use memory queues by default.
+Only enabled `RegisterDurable` observers open `<STATE_DB_PATH>.plugins.sqlite`;
+other observers do not access it, even if an old queue file exists. Plugins may
+create their own data directories under `plugins/` beside the state database.
+The observer mechanism lives in `internal/pluginruntime/plugin_*.go`; concrete
+implementations live in `plugins/`. See [Plugins](plugins.md) for delivery modes
+and failure behavior.
 
 The live Long Poll cursor is memory-only. Successful batches advance it after
 all events are handled. Protocol `failed=1` advances the cursor, `failed=2`
@@ -78,7 +100,8 @@ current events. Downtime or cursor expiration can lose events. Telegram sends
 and SQLite commits are not atomic: a crash after acceptance can leave an
 unmapped send and cause duplication if replayed. There is no exactly-once
 guarantee. [Migration](history.md) adds a pending-delivery guard, not a durable
-live cursor. No metrics or health HTTP endpoint is implemented.
+live cursor. The optional [metrics observer](metrics.md) exposes `/metrics`;
+no health HTTP endpoint is implemented.
 
 ## Rate Protection
 
@@ -119,10 +142,16 @@ log access and disable debug when detailed traces are no longer needed.
 
 ## Docker Production
 
-Verified on 2026-09-12: `vk2tg` is the primary production relay, running the Go
-binary in live mode with healthy Long Poll cycles. Project/service `vk2tg`,
+`vk2tg` is the primary production relay, running the Go binary in live mode.
+Project/service `vk2tg`,
 container `vk2tg-vk2tg-1`, image `vk2tg:local`, volume `vk2tg_state`. Effective
 settings are `DRY_RUN=false`, `DEBUG=true`, `STATE_DB_PATH=/data/state.db`.
+
+Preserve the complete list of Compose overlays, enabled observers and bind
+mounts used by the running deployment. Include `compose.metrics.yaml` when
+metrics are published, plus any private overlays. Commands below show the base
+deployment only; append the deployment's other `-f` files before the command.
+Back up private implementations, local tests and plugin data separately from Git.
 
 [compose.yaml](../compose.yaml) overrides `.env` for `DRY_RUN` and
 `STATE_DB_PATH`. It uses `unless-stopped` and `json-file` logs with `max-size=10m`,
@@ -152,5 +181,7 @@ docker compose -p vk2tg -f compose.yaml up -d --no-deps --force-recreate vk2tg
 
 Recreation applies `.env` changes; a plain restart does not. Preserve the SQLite
 volume and protected backups. Never use `down -v` or global cleanup for updates.
+An ordinary live update does not require `test-history` or `migrate-history`;
+do not run either command to verify a deployment or resend old messages.
 Use isolated resources for development and stop live delivery before an
 authorized history operation. The application never starts another service.

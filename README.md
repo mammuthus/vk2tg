@@ -18,6 +18,8 @@ Telegram is outbound-only, with no polling, webhooks or reverse relay.
 - Central VK API pacing/backoff and flood protection for errors 6/9/29;
   Telegram pacing and `429`/`retry_after` handling.
 - Structured JSON logs and optional privacy-safe `DEBUG=true` traces.
+- Optional build-time message observers with memory queues or opt-in SQLite retries;
+  disabled by default, with diagnostic `example` and Prometheus `metrics` plugins.
 
 ## Quick Start
 
@@ -55,6 +57,9 @@ SQLite at `/data/state.db`, restarts with `unless-stopped`, and rotates Docker
 
 - [Runtime and operations](docs/runtime.md): environment variables, media,
   SQLite, rate protection, debug/privacy, deployment and health checks.
+- [Plugins](docs/plugins.md): registration, local-only files, configuration,
+  lifecycle and delivery guarantees.
+- [Metrics](docs/metrics.md): optional `/metrics`, Docker access and Prometheus setup.
 - [History](docs/history.md): `test-history --count N` versus `migrate-history`,
   pagination, backups, resume and failure handling.
 
@@ -64,13 +69,19 @@ reconciliation rather than automatically resending them.
 
 ## Development
 
-Tests use mock HTTP APIs and temporary SQLite databases, not live accounts:
+Tests use mock HTTP APIs and temporary SQLite databases, not live accounts.
+`plugins/` contains only plugin implementations; their runtime lives in
+`internal/pluginruntime/plugin_*.go`. Plugin/runtime unit tests live in the local,
+Git-ignored `tests/` directory. `scripts/test.sh` runs the complete suite in a
+temporary workspace; it requires these local tests. A fresh checkout can still
+run the core tests with `go test ./...` and build without `tests/`.
+For the complete local checks:
 
 ```sh
-gofmt -l *.go
-go test ./...
-go test -race ./...
-go vet ./...
+gofmt -l *.go plugins/*.go internal/pluginruntime/*.go tests/plugins/*.go tests/pluginruntime/*.go
+./scripts/test.sh test ./...
+./scripts/test.sh test -race ./...
+./scripts/test.sh vet ./...
 go build -o /tmp/vk2tg-check .
 git diff --check
 ```
