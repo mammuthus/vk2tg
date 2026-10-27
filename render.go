@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"html"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	"github.com/mammuthus/vk2tg/internal/pluginruntime"
 )
 
 type MediaSource struct {
@@ -14,6 +17,7 @@ type MediaSource struct {
 }
 
 type RenderedMessage struct {
+	PluginEvent            pluginruntime.Event
 	UnsupportedAttachments int
 	WallFallbacks          int
 	IgnoredForwards        int
@@ -29,8 +33,14 @@ type RenderedMessage struct {
 
 func normalizeMessage(message VKMessage, name string) (RenderedMessage, error) {
 	result := RenderedMessage{Name: name, VKMessageID: message.ID, IgnoredForwards: len(message.ForwardedMessages)}
+	result.PluginEvent = pluginruntime.Event{Version: 1, VKMessageID: message.ID, VKPeerID: message.PeerID, VKSenderID: message.FromID, Out: message.Out != 0, Text: message.Text}
+	result.PluginEvent.VKConversationMessageID = max(message.ConversationMessageID, 0)
+	if message.Date > 0 {
+		result.PluginEvent.PublishedAt = time.Unix(message.Date, 0).UTC()
+	}
 	if message.ReplyMessage != nil {
 		result.VKReplyToID = message.ReplyMessage.ID
+		result.PluginEvent.VKReplyToID = message.ReplyMessage.ID
 	}
 	var texts []string
 	if message.Text != "" {

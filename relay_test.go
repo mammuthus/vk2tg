@@ -32,79 +32,95 @@ func TestRelayEndToEnd(t *testing.T) {
 		{name: "dry run", peer: 2000000001, sender: 42, dry: true},
 		{name: "dry run attachment", peer: 2000000001, sender: 42, dry: true, attachments: `{"attach1_type":"photo"}`, wantFull: 1},
 	}
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			polls, sends, metadata, fullCalls, downloads := 0, 0, 0, 0, 0
-			var log bytes.Buffer
-			var server *httptest.Server
-			server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				switch request.URL.Path {
-				case "/messages.getLongPollServer":
-					writeFixture(t, writer, fmt.Sprintf(`{"response":{"server":%q,"key":"fake-key","ts":"10"}}`, server.URL+"/poll"))
-				case "/poll":
-					polls++
-					if polls > 1 {
-						if request.URL.Query().Get("ts") != "11" {
-							t.Error("cursor not advanced")
+	for _, enabled := range []bool{false, true} {
+		for _, testCase := range tests {
+			t.Run(fmt.Sprintf("%s/plugins=%t", testCase.name, enabled), func(t *testing.T) {
+				polls, sends, metadata, fullCalls, downloads := 0, 0, 0, 0, 0
+				var log bytes.Buffer
+				var server *httptest.Server
+				server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					switch request.URL.Path {
+					case "/messages.getLongPollServer":
+						writeFixture(t, writer, fmt.Sprintf(`{"response":{"server":%q,"key":"fake-key","ts":"10"}}`, server.URL+"/poll"))
+					case "/poll":
+						polls++
+						if polls > 1 {
+							if request.URL.Query().Get("ts") != "11" {
+								t.Error("cursor not advanced")
+							}
+							writeFixture(t, writer, `{"failed":4}`)
+							return
 						}
-						writeFixture(t, writer, `{"failed":4}`)
-						return
+						attachments := testCase.attachments
+						if attachments == "" {
+							attachments = "{}"
+						}
+						writeFixture(t, writer, fmt.Sprintf(`{"ts":"11","updates":[[4,99,%d,%d,123,"hello &lt;&amp;&gt;",{"from":"%d"},%s]]}`, testCase.flags, testCase.peer, testCase.sender, attachments))
+					case "/users.get":
+						metadata++
+						writeFixture(t, writer, `{"response":[{"id":42,"first_name":"A <B>","last_name":"User"}]}`)
+					case "/messages.getById":
+						fullCalls++
+						writeFixture(t, writer, fmt.Sprintf(`{"response":{"items":[{"id":99,"peer_id":2000000001,"from_id":42,"text":"full text","attachments":[{"type":"photo","photo":{"sizes":[{"url":%q,"width":100,"height":100}]}}]}]}}`, server.URL+"/media"))
+					case "/media":
+						downloads++
+						writeFixture(t, writer, "photo")
+					case "/botfake-bot-token/sendMessage":
+						sends++
+						var payload struct {
+							Text string `json:"text"`
+						}
+						if json.NewDecoder(request.Body).Decode(&payload) != nil || payload.Text != "<b>A &lt;B&gt; User</b>\n\nhello &lt;&amp;&gt;" {
+							t.Error("incorrect relayed text")
+						}
+						writeTelegramSuccess(t, writer, request)
+					default:
+						t.Errorf("unexpected or write endpoint: %s", request.URL.Path)
+						writer.WriteHeader(400)
 					}
-					attachments := testCase.attachments
-					if attachments == "" {
-						attachments = "{}"
-					}
-					writeFixture(t, writer, fmt.Sprintf(`{"ts":"11","updates":[[4,99,%d,%d,123,"hello &lt;&amp;&gt;",{"from":"%d"},%s]]}`, testCase.flags, testCase.peer, testCase.sender, attachments))
-				case "/users.get":
-					metadata++
-					writeFixture(t, writer, `{"response":[{"id":42,"first_name":"A <B>","last_name":"User"}]}`)
-				case "/messages.getById":
-					fullCalls++
-					writeFixture(t, writer, fmt.Sprintf(`{"response":{"items":[{"id":99,"peer_id":2000000001,"from_id":42,"text":"full text","attachments":[{"type":"photo","photo":{"sizes":[{"url":%q,"width":100,"height":100}]}}]}]}}`, server.URL+"/media"))
-				case "/media":
-					downloads++
-					writeFixture(t, writer, "photo")
-				case "/botfake-bot-token/sendMessage":
-					sends++
-					var payload struct {
-						Text string `json:"text"`
-					}
-					if json.NewDecoder(request.Body).Decode(&payload) != nil || payload.Text != "<b>A &lt;B&gt; User</b>\n\nhello &lt;&amp;&gt;" {
-						t.Error("incorrect relayed text")
-					}
-					writeTelegramSuccess(t, writer, request)
-				default:
-					t.Errorf("unexpected or write endpoint: %s", request.URL.Path)
-					writer.WriteHeader(400)
+				}))
+				defer server.Close()
+				config := Config{VKAccessToken: "fake-token", VKTargetPeerID: 2000000001, TelegramBotToken: "fake-bot-token", TelegramTargetChatID: -123, VKBlockedSenderIDs: map[int64]struct{}{73: {}}, DryRun: testCase.dry}
+				vk, err := NewVKClient(config, server.URL, time.Second)
+				if err != nil {
+					t.Fatal(err)
 				}
-			}))
-			defer server.Close()
-			config := Config{VKAccessToken: "fake-token", VKTargetPeerID: 2000000001, TelegramBotToken: "fake-bot-token", TelegramTargetChatID: -123, VKBlockedSenderIDs: map[int64]struct{}{73: {}}, DryRun: testCase.dry}
-			vk, err := NewVKClient(config, server.URL, time.Second)
-			if err != nil {
-				t.Fatal(err)
-			}
-			telegram, err := newTestTelegramClient(config, server.URL, time.Second)
-			if err != nil {
-				t.Fatal(err)
-			}
-			relay := Relay{config: config, vk: vk, telegram: telegram, store: testMessageStore(t), mediaHTTP: server.Client(), logger: slog.New(slog.NewJSONHandler(&log, nil)), tempRoot: t.TempDir(), retryDelay: time.Millisecond}
-			if err := relay.Run(t.Context()); err == nil {
-				t.Fatal("failed=4 should stop the loop")
-			}
-			if sends != testCase.wantSend || fullCalls != testCase.wantFull || downloads != 0 {
-				t.Fatalf("unexpected work: sends=%d full=%d downloads=%d", sends, fullCalls, downloads)
-			}
-			if testCase.wantSend == 0 && !testCase.dry && metadata != 0 {
-				t.Fatal("filter performed metadata lookup")
-			}
-			if strings.Contains(log.String(), "hello") || strings.Contains(log.String(), "fake-token") || strings.Contains(log.String(), "full text") {
-				t.Fatal("unsafe log")
-			}
-			if testCase.dry && !strings.Contains(log.String(), "would relay message") {
-				t.Fatal("missing dry-run fact")
-			}
-		})
+				telegram, err := newTestTelegramClient(config, server.URL, time.Second)
+				if err != nil {
+					t.Fatal(err)
+				}
+				relay := Relay{config: config, vk: vk, telegram: telegram, store: testMessageStore(t), mediaHTTP: server.Client(), logger: slog.New(slog.NewJSONHandler(&log, nil)), tempRoot: t.TempDir(), retryDelay: time.Millisecond}
+				observer := &recordingObserver{store: relay.store, t: t}
+				if enabled {
+					relay.plugins = observer
+				}
+				if err := relay.Run(t.Context()); err == nil {
+					t.Fatal("failed=4 should stop the loop")
+				}
+				if enabled {
+					if len(observer.events) != testCase.wantSend {
+						t.Fatal("unexpected plugin calls")
+					}
+					for _, event := range observer.events {
+						if event.VKMessageID != 99 || event.PublishedAt.Unix() != 123 || event.Text != "hello <&>" || event.TelegramChatID != -123 {
+							t.Fatal("incorrect plugin event")
+						}
+					}
+				}
+				if sends != testCase.wantSend || fullCalls != testCase.wantFull || downloads != 0 {
+					t.Fatalf("unexpected work: sends=%d full=%d downloads=%d", sends, fullCalls, downloads)
+				}
+				if testCase.wantSend == 0 && !testCase.dry && metadata != 0 {
+					t.Fatal("filter performed metadata lookup")
+				}
+				if strings.Contains(log.String(), "hello") || strings.Contains(log.String(), "fake-token") || strings.Contains(log.String(), "full text") {
+					t.Fatal("unsafe log")
+				}
+				if testCase.dry && !strings.Contains(log.String(), "would relay message") {
+					t.Fatal("missing dry-run fact")
+				}
+			})
+		}
 	}
 }
 
@@ -302,5 +318,52 @@ func TestRelayWallPhoto(t *testing.T) {
 	relay := Relay{config: config, vk: vk, telegram: telegram, store: testMessageStore(t), mediaHTTP: server.Client(), tempRoot: t.TempDir(), logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if relay.Run(t.Context()) == nil || photos != 1 {
 		t.Fatal("wall photo was not delivered")
+	}
+}
+
+func TestFetchFullMessagesIncludesSourceIDForPlainText(t *testing.T) {
+	for _, flags := range []int{0, 2} {
+		t.Run(fmt.Sprintf("flags=%d", flags), func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				switch r.URL.Path {
+				case "/messages.getById":
+					writeFixture(t, w, fmt.Sprintf(`{"response":{"items":[{"id":42,"conversation_message_id":314,"peer_id":2000000001,"from_id":9,"out":%d,"date":123,"text":"#домашка #логика"}]}}`, flags/2))
+				case "/users.get":
+					writeFixture(t, w, `{"response":[{"id":9,"first_name":"Test","last_name":"User"}]}`)
+				default:
+					t.Error("unexpected API path")
+					w.WriteHeader(400)
+				}
+			}))
+			defer server.Close()
+			env := map[string]string{"VK_ACCESS_TOKEN": "fake", "VK_TARGET_PEER_ID": "2000000001", "TELEGRAM_BOT_TOKEN": "fake", "TELEGRAM_TARGET_CHAT_ID": "-1", "VK_FETCH_FULL_MESSAGES": "true"}
+			config, err := loadConfig(func(k string) string { return env[k] })
+			if err != nil {
+				t.Fatal(err)
+			}
+			vk, err := NewVKClient(config, server.URL, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			relay := Relay{config: config, vk: vk, logger: slog.New(slog.DiscardHandler)}
+			rendered, accepted, err := relay.prepare(t.Context(), json.RawMessage(fmt.Sprintf(`[4,42,%d,2000000001,123,"#домашка #логика",{"from":"9"},{}]`, flags)))
+			if err != nil || !accepted {
+				t.Fatalf("prepare failed: %v", err)
+			}
+			payload, err := json.Marshal(rendered.PluginEvent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(payload, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if fields["vk_conversation_message_id"] != float64(314) || calls != 2 || fields["out"] != (flags == 2) {
+				t.Fatal("plain text source metadata was not fetched")
+			}
+
+		})
 	}
 }

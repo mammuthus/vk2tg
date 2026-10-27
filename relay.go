@@ -8,9 +8,13 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/mammuthus/vk2tg/internal/pluginruntime"
 )
 
 type Relay struct {
+	plugins        pluginObserver
+	pluginsLive    bool
 	config         Config
 	vk             *VKClient
 	telegram       *TelegramClient
@@ -24,6 +28,8 @@ type Relay struct {
 }
 
 func (relay *Relay) Run(ctx context.Context) error {
+	relay.pluginsLive = !relay.config.DryRun
+	defer func() { relay.pluginsLive = false }()
 	ctx = relay.debugContext(ctx)
 	trace(ctx, "relay debug enabled", "dry_run", relay.config.DryRun)
 	if relay.retryDelay <= 0 {
@@ -170,12 +176,16 @@ func (relay *Relay) prepare(ctx context.Context, event json.RawMessage) (Rendere
 			return RenderedMessage{}, false, nil
 		}
 	}
-	if needsFull {
+	if needsFull || relay.config.FetchFullMessages {
 		trace(ctx, "getById started")
+		publishedAt := message.Date
 		message, err = relay.vk.GetMessageByID(ctx, message.ID)
 		if err != nil {
 			traceFailure(ctx, "getById", err)
 			return RenderedMessage{}, false, err
+		}
+		if message.Date <= 0 {
+			message.Date = publishedAt
 		}
 		traceMessage(ctx, "getById succeeded", message)
 		if !relay.acceptsContext(debugContext(ctx, nil, "stage", "enriched_filters"), message) {
@@ -214,7 +224,26 @@ func (relay *Relay) deliverMapped(ctx context.Context, message RenderedMessage) 
 		return err
 	}
 	trace(ctx, "canonical telegram message", "telegram_message_id", canonical)
-	return relay.store.Save(ctx, message.VKMessageID, canonical)
+	if err := relay.store.Save(ctx, message.VKMessageID, canonical); err != nil {
+		return err
+	}
+	if relay.pluginsLive && relay.plugins != nil {
+		event := message.PluginEvent
+		event.TelegramChatID = relay.config.TelegramTargetChatID
+		event.TelegramMessageID = canonical
+		event.RelayedAt = time.Now().UTC()
+		event.NormalizedText = message.Text
+		event.UnsupportedAttachments = message.UnsupportedAttachments
+		event.IgnoredForwards = message.IgnoredForwards
+		for _, media := range message.Media {
+			event.Attachments = append(event.Attachments, pluginruntime.Attachment{Kind: media.Kind, URL: media.URL, Name: media.Name})
+		}
+		if err := relay.plugins.Enqueue(ctx, event); err != nil {
+			// The mapping already exists: a plugin failure must never cause a Telegram retry.
+			relay.logger.Warn("plugin enqueue failed; Telegram delivery remains successful")
+		}
+	}
+	return nil
 }
 
 func (relay *Relay) prepareMessage(ctx context.Context, message VKMessage) (RenderedMessage, bool, error) {
@@ -286,4 +315,9 @@ func retryableVK(err error) bool {
 func (relay *Relay) retry(ctx context.Context) error {
 	relay.logger.Warn("transient vk failure; retrying")
 	return pause(ctx, relay.retryDelay)
+}
+
+// pluginObserver does not expose relay clients or mutable delivery state.
+type pluginObserver interface {
+	Enqueue(context.Context, pluginruntime.Event) error
 }

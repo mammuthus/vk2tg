@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/mammuthus/vk2tg/internal/pluginruntime"
 )
 
 func TestRelayPersistentReplies(t *testing.T) {
@@ -144,8 +146,9 @@ func TestCanonicalMappingForMedia(t *testing.T) {
 				t.Fatal(err)
 			}
 			store := testMessageStore(t)
-			relay := Relay{telegram: telegram, store: store, mediaHTTP: server.Client(), tempRoot: t.TempDir()}
-			message := RenderedMessage{VKMessageID: 42, Name: "Sender", Repost: true, Text: "wall", Media: []MediaSource{{Kind: "photo", URL: server.URL + "/media", Name: "photo.jpg"}, {Kind: "document", URL: server.URL + "/media", Name: "doc.txt"}}}
+			observer := &recordingObserver{store: store, t: t}
+			relay := Relay{telegram: telegram, store: store, mediaHTTP: server.Client(), tempRoot: t.TempDir(), plugins: observer, pluginsLive: true, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			message := RenderedMessage{PluginEvent: pluginruntime.Event{VKMessageID: 42}, VKMessageID: 42, Name: "Sender", Repost: true, Text: "wall", Media: []MediaSource{{Kind: "photo", URL: server.URL + "/media", Name: "photo.jpg"}, {Kind: "document", URL: server.URL + "/media", Name: "doc.txt"}}}
 			err = relay.deliverMapped(t.Context(), message)
 			if (err != nil) != fail {
 				t.Fatalf("unexpected delivery error: %v", err)
@@ -155,10 +158,16 @@ func TestCanonicalMappingForMedia(t *testing.T) {
 				t.Fatal(err)
 			}
 			if fail {
+				if len(observer.events) != 0 {
+					t.Fatal("partial send notified plugin")
+				}
 				if identifier != 0 {
 					t.Fatal("partial media send created mapping")
 				}
 			} else {
+				if len(observer.events) != 1 || len(observer.events[0].Attachments) != 2 {
+					t.Fatal("completed media event missing")
+				}
 				if identifier != 501 {
 					t.Fatal("canonical mapping is not first photo ID")
 				}

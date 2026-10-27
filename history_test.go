@@ -71,7 +71,7 @@ func TestHistoryReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relay := Relay{config: config, vk: vk, telegram: telegram, mediaHTTP: server.Client(), logger: slog.New(slog.NewJSONHandler(&logs, nil)), retryDelay: time.Millisecond}
+	relay := Relay{plugins: forbiddenHistoryObserver{t}, config: config, vk: vk, telegram: telegram, mediaHTTP: server.Client(), logger: slog.New(slog.NewJSONHandler(&logs, nil)), retryDelay: time.Millisecond}
 	if err := relay.ReplayHistory(t.Context(), 3); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestHistoryFloodStopsAfterOneRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relay := Relay{config: config, vk: vk, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	relay := Relay{plugins: forbiddenHistoryObserver{t}, config: config, vk: vk, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	err = relay.ReplayHistory(t.Context(), 5)
 	var apiError *VKAPIError
 	if !errors.As(err, &apiError) || apiError.Code != 9 || requests != 1 {
@@ -185,7 +185,7 @@ func TestHistoryMediaPipeline(t *testing.T) {
 				t.Fatal(err)
 			}
 			directory := t.TempDir()
-			relay := Relay{config: config, vk: vk, telegram: telegram, mediaHTTP: server.Client(), tempRoot: directory, logger: slog.New(slog.NewJSONHandler(&logs, nil))}
+			relay := Relay{plugins: forbiddenHistoryObserver{t}, config: config, vk: vk, telegram: telegram, mediaHTTP: server.Client(), tempRoot: directory, logger: slog.New(slog.NewJSONHandler(&logs, nil))}
 			if err := relay.ReplayHistory(t.Context(), 3); err != nil {
 				t.Fatal(err)
 			}

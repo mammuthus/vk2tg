@@ -1,0 +1,8 @@
+# Optional overlay: docker compose -f compose.yaml -f compose.metrics.yaml ...
+# Add metrics to PLUGINS in .env before enabling it. Keep the host binding local.
+services:
+  vk2tg:
+    environment:
+      METRICS_LISTEN_ADDR: "0.0.0.0:9091"
+    ports:
+      - "127.0.0.1:${METRICS_HOST_PORT:-9091}:9091"

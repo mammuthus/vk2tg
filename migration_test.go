@@ -165,7 +165,7 @@ func TestMigrationOrderMappingRepliesAndResume(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return &Relay{config: config, vk: vk, telegram: telegram, store: store, logger: logger, mediaHTTP: server.Client(), tempRoot: t.TempDir(), migrationClock: clock}
+		return &Relay{plugins: forbiddenHistoryObserver{t}, config: config, vk: vk, telegram: telegram, store: store, logger: logger, mediaHTTP: server.Client(), tempRoot: t.TempDir(), migrationClock: clock}
 	}
 	firstRelay := newRelay()
 	if err := firstRelay.MigrateHistory(t.Context()); !errors.Is(err, context.Canceled) {
@@ -249,7 +249,7 @@ func TestMigrationPendingDeliveryGuard(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			relay := Relay{config: config, vk: vk, telegram: telegram, store: store, logger: slog.New(slog.DiscardHandler), migrationClock: &migrationTestClock{now: time.Unix(2000000000, 0)}}
+			relay := Relay{plugins: forbiddenHistoryObserver{t}, config: config, vk: vk, telegram: telegram, store: store, logger: slog.New(slog.DiscardHandler), migrationClock: &migrationTestClock{now: time.Unix(2000000000, 0)}}
 			err = relay.MigrateHistory(t.Context())
 			if mapped {
 				if err != nil || requests != 1 {
@@ -284,7 +284,7 @@ func TestMigrationFloodStops(t *testing.T) {
 			if err := vk.ConfigureRateProtection(t.Context(), store, slog.New(slog.DiscardHandler)); err != nil {
 				t.Fatal(err)
 			}
-			relay := Relay{config: config, vk: vk, telegram: telegram, store: store, logger: slog.New(slog.DiscardHandler)}
+			relay := Relay{plugins: forbiddenHistoryObserver{t}, config: config, vk: vk, telegram: telegram, store: store, logger: slog.New(slog.DiscardHandler)}
 			var failure *VKAPIError
 			if err := relay.MigrateHistory(t.Context()); !errors.As(err, &failure) || failure.Code != code || calls != 1 {
 				t.Fatalf("flood did not stop: %v calls=%d", err, calls)
@@ -322,7 +322,7 @@ func TestMigrationBoundaryChangeStops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relay := Relay{config: config, vk: vk, telegram: telegram, store: store, logger: slog.New(slog.DiscardHandler)}
+	relay := Relay{plugins: forbiddenHistoryObserver{t}, config: config, vk: vk, telegram: telegram, store: store, logger: slog.New(slog.DiscardHandler)}
 	if err := relay.MigrateHistory(t.Context()); err == nil || !strings.Contains(err.Error(), "boundary changed") || requests != 1 {
 		t.Fatalf("shifted pagination was not stopped: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestMigrationSendFailureLeavesPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relay := Relay{config: config, vk: vk, telegram: telegram, store: store, logger: slog.New(slog.DiscardHandler), senderNames: map[int64]string{42: "Sender"}}
+	relay := Relay{plugins: forbiddenHistoryObserver{t}, config: config, vk: vk, telegram: telegram, store: store, logger: slog.New(slog.DiscardHandler), senderNames: map[int64]string{42: "Sender"}}
 	if err := relay.MigrateHistory(t.Context()); err == nil || sends != 1 {
 		t.Fatal("failed send not reported")
 	}

@@ -21,3 +21,9 @@
 *.sqlite-*
 *.db
 *.db-*
+
+# Private build-time extensions (not published).
+/plugins/local_*.go
+
+# Local plugin/runtime test suites, kept outside the published source.
+/tests/

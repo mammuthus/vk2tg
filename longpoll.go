@@ -12,13 +12,15 @@ import (
 )
 
 type VKMessage struct {
-	ID           int64          `json:"id"`
-	PeerID       int64          `json:"peer_id"`
-	FromID       int64          `json:"from_id"`
-	Out          int            `json:"out"`
-	Text         string         `json:"text"`
-	Attachments  []VKAttachment `json:"attachments"`
-	ReplyMessage *struct {
+	ConversationMessageID int64          `json:"conversation_message_id"`
+	Date                  int64          `json:"date"`
+	ID                    int64          `json:"id"`
+	PeerID                int64          `json:"peer_id"`
+	FromID                int64          `json:"from_id"`
+	Out                   int            `json:"out"`
+	Text                  string         `json:"text"`
+	Attachments           []VKAttachment `json:"attachments"`
+	ReplyMessage          *struct {
 		ID int64 `json:"id"`
 	} `json:"reply_message"`
 	ForwardedMessages []struct{} `json:"fwd_messages"`
@@ -154,6 +156,10 @@ func decodeLongPollMessageContext(ctx context.Context, raw json.RawMessage) (VKM
 		json.Unmarshal(event[3], &message.PeerID) != nil || json.Unmarshal(event[5], &message.Text) != nil ||
 		json.Unmarshal(event[6], &extra) != nil || json.Unmarshal(event[7], &attachments) != nil {
 		return VKMessage{}, false, ErrVKInvalidResponse
+	}
+	// The timestamp is optional observer metadata; do not change message acceptance.
+	if json.Unmarshal(event[4], &message.Date) != nil || message.Date < 0 {
+		message.Date = 0
 	}
 	message.Out = (flags & 2) >> 1
 	if sender, exists := extra["from"]; exists {

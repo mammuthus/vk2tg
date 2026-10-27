@@ -3,3 +3,12 @@
 !go.mod
 !go.sum
 !*.go
+!plugins/
+!plugins/*.go
+!internal/
+!internal/pluginruntime/
+!internal/pluginruntime/plugin_*.go
+
+# Private runtime data/config must not be traversed or sent as build context.
+homework-data/
+homework-config/

@@ -9,6 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/mammuthus/vk2tg/internal/pluginruntime"
+	_ "github.com/mammuthus/vk2tg/plugins" // Register compiled-in observers.
 )
 
 func main() {
@@ -67,6 +70,21 @@ func runRelay(ctx context.Context, config Config, logger *slog.Logger, historyCo
 	if historyCount == -1 {
 		telegram.logger = logger
 		return relay.MigrateHistory(ctx)
+	}
+	if !config.DryRun && len(config.Plugins) > 0 {
+		observer, err := pluginruntime.Start(ctx, pluginruntime.Options{Names: config.Plugins, QueuePath: config.StateDBPath + ".plugins.sqlite", Timeout: config.PluginTimeout, Logger: logger})
+		if err != nil {
+			logger.Warn("plugins unavailable; relay will continue")
+		} else {
+			relay.plugins = observer
+			defer func() {
+				shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if observer.Close(shutdown) != nil {
+					logger.Warn("plugin shutdown incomplete")
+				}
+			}()
+		}
 	}
 	return relay.Run(ctx)
 }

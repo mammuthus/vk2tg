@@ -103,7 +103,7 @@ func TestHistoryStickerLinkAndService(t *testing.T) {
 				t.Fatal(err)
 			}
 			directory := t.TempDir()
-			relay := Relay{config: config, vk: vk, telegram: telegram, mediaHTTP: server.Client(), tempRoot: directory, logger: slog.New(slog.NewJSONHandler(&logs, nil))}
+			relay := Relay{plugins: forbiddenHistoryObserver{t}, config: config, vk: vk, telegram: telegram, mediaHTTP: server.Client(), tempRoot: directory, logger: slog.New(slog.NewJSONHandler(&logs, nil))}
 			if err := relay.ReplayHistory(t.Context(), 8); err != nil {
 				t.Fatal(err)
 			}

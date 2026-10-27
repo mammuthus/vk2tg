@@ -4,9 +4,15 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/mammuthus/vk2tg/internal/pluginruntime"
 )
 
 type Config struct {
+	FetchFullMessages    bool
+	Plugins              []string
+	PluginTimeout        time.Duration
 	VKAccessToken        string
 	VKTargetPeerID       int64
 	TelegramBotToken     string
@@ -23,6 +29,7 @@ func loadConfig(getenv func(string) string) (Config, error) {
 		TelegramBotToken:   strings.TrimSpace(getenv("TELEGRAM_BOT_TOKEN")),
 		VKBlockedSenderIDs: make(map[int64]struct{}),
 		DryRun:             true,
+		PluginTimeout:      10 * time.Second,
 		StateDBPath:        strings.TrimSpace(getenv("STATE_DB_PATH")),
 	}
 	if config.StateDBPath == "" {
@@ -63,6 +70,26 @@ func loadConfig(getenv func(string) string) (Config, error) {
 		if err != nil {
 			return Config{}, fmt.Errorf("DEBUG must be a boolean")
 		}
+	}
+	if value := strings.TrimSpace(getenv("VK_FETCH_FULL_MESSAGES")); value != "" {
+		config.FetchFullMessages, err = strconv.ParseBool(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("VK_FETCH_FULL_MESSAGES must be a boolean")
+		}
+	}
+	config.Plugins, err = pluginruntime.ParseNames(getenv("PLUGINS"))
+	if err != nil {
+		return Config{}, err
+	}
+	if err = pluginruntime.Validate(config.Plugins); err != nil {
+		return Config{}, err
+	}
+	if value := strings.TrimSpace(getenv("PLUGIN_TIMEOUT_SECONDS")); value != "" {
+		seconds, parseErr := strconv.Atoi(value)
+		if parseErr != nil || seconds < 1 || seconds > 60 {
+			return Config{}, fmt.Errorf("PLUGIN_TIMEOUT_SECONDS must be between 1 and 60")
+		}
+		config.PluginTimeout = time.Duration(seconds) * time.Second
 	}
 	return config, nil
 }
