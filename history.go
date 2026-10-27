@@ -141,7 +141,7 @@ func (relay *Relay) ReplayHistory(ctx context.Context, count int) error {
 				}
 			}
 		}
-		canonical, err := deliverMessage(ctx, relay.telegram, relay.mediaHTTP, relay.tempRoot, rendered)
+		canonical, err := relay.deliverWithMediaRetry(ctx, &rendered)
 		if err != nil {
 			return err
 		}

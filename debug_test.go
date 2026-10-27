@@ -17,6 +17,8 @@ func TestDebugTrace(t *testing.T) {
 		name, reason                                           string
 		flags, peer, sender                                    int
 		photo, telegramFailure, mediaFailure, rateLimit, quiet bool
+		mediaRefresh                                           bool
+		refreshStatus                                          int
 	}{
 		{name: "accepted"},
 		{name: "outbox accepted", flags: 2, photo: true},
@@ -25,6 +27,8 @@ func TestDebugTrace(t *testing.T) {
 		{name: "media", photo: true},
 		{name: "Telegram failure", photo: true, telegramFailure: true},
 		{name: "media failure", photo: true, mediaFailure: true},
+		{name: "media URL refresh", photo: true, mediaRefresh: true},
+		{name: "media URL refresh 403", photo: true, mediaRefresh: true, refreshStatus: 403},
 		{name: "Telegram retry", photo: true, rateLimit: true},
 		{name: "debug disabled", quiet: true},
 	} {
@@ -58,7 +62,14 @@ func TestDebugTrace(t *testing.T) {
 					writeFixture(t, writer, fmt.Sprintf(`{"ts":"11","updates":[[4,99,%d,%d,123,"private-message-text",%s,%s]]}`, testCase.flags, peer, extra, hints))
 				case "/messages.getById":
 					fullCalls++
-					writeFixture(t, writer, fmt.Sprintf(`{"response":{"items":[{"id":99,"peer_id":2000000001,"from_id":42,"out":%d,"text":"private-full-text","reply_message":{"id":98},"attachments":[{"type":"photo","photo":{"sizes":[{"url":%q,"width":100,"height":100}]}}]}]}}`, (testCase.flags&2)>>1, server.URL+"/private-media-url"))
+					address := server.URL + "/private-media-url"
+					if testCase.mediaRefresh && fullCalls > 1 {
+						address = server.URL + "/refreshed-private-media-url"
+						if sends != 0 {
+							t.Error("media refreshed after Telegram delivery started")
+						}
+					}
+					writeFixture(t, writer, fmt.Sprintf(`{"response":{"items":[{"id":99,"peer_id":2000000001,"from_id":42,"out":%d,"text":"private-full-text","reply_message":{"id":98},"attachments":[{"type":"photo","photo":{"sizes":[{"url":%q,"width":100,"height":100}]}}]}]}}`, (testCase.flags&2)>>1, address))
 				case "/users.get":
 					writeFixture(t, writer, `{"response":[{"id":42,"first_name":"PrivateName"}]}`)
 				case "/private-media-url":
@@ -67,9 +78,31 @@ func TestDebugTrace(t *testing.T) {
 						writer.WriteHeader(403)
 						return
 					}
+					if testCase.mediaRefresh {
+						status := testCase.refreshStatus
+						if status == 0 {
+							status = 404
+						}
+						writer.WriteHeader(status)
+						return
+					}
+					writeFixture(t, writer, "private-binary-payload")
+				case "/refreshed-private-media-url":
+					downloads++
 					writeFixture(t, writer, "private-binary-payload")
 				case "/botsecret-telegram-token/sendMessage", "/botsecret-telegram-token/sendPhoto":
 					sends++
+					if testCase.mediaRefresh {
+						if err := request.ParseMultipartForm(1 << 20); err != nil {
+							t.Error(err)
+							return
+						}
+						defer request.MultipartForm.RemoveAll()
+						var reply TelegramReplyParameters
+						if json.Unmarshal([]byte(request.FormValue("reply_parameters")), &reply) != nil || reply.MessageID != 500 {
+							t.Error("media retry lost reply mapping")
+						}
+					}
 					if testCase.telegramFailure {
 						writer.WriteHeader(400)
 						writeFixture(t, writer, `{"ok":false,"error_code":400,"description":"private-error-description"}`)
@@ -97,7 +130,12 @@ func TestDebugTrace(t *testing.T) {
 				t.Fatal(err)
 			}
 			store := testMessageStore(t)
-			relay := Relay{config: config, vk: vk, telegram: telegram, store: store, mediaHTTP: server.Client(), tempRoot: t.TempDir(), logger: slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+			if testCase.mediaRefresh {
+				if err := store.Save(t.Context(), 98, 500); err != nil {
+					t.Fatal(err)
+				}
+			}
+			relay := Relay{config: config, vk: vk, telegram: telegram, store: store, mediaHTTP: server.Client(), tempRoot: t.TempDir(), logger: slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})), retryDelay: time.Millisecond}
 			if relay.Run(t.Context()) == nil {
 				t.Fatal("expected final protocol or delivery error")
 			}
@@ -168,13 +206,19 @@ func TestDebugTrace(t *testing.T) {
 			}
 			if testCase.mediaFailure {
 				requireEvent("media download failed")
-				if sends != 0 || mapping != 0 || len(events["long poll ts advanced"]) != 0 {
+				if sends != 0 || mapping != 0 || fullCalls != 4 || downloads != 4 || len(events["long poll ts advanced"]) != 0 {
 					t.Fatal("failed media advanced or sent")
 				}
 				return
 			}
 			if testCase.photo {
 				requireEvent("media download succeeded")
+			}
+			if testCase.mediaRefresh {
+				requireEvent("media URL refresh scheduled")
+				if fullCalls != 2 || downloads != 2 || sends != 1 {
+					t.Fatalf("unexpected refresh work: getById=%d downloads=%d sends=%d", fullCalls, downloads, sends)
+				}
 			}
 			method := "sendMessage"
 			if testCase.photo {

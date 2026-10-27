@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +17,7 @@ import (
 )
 
 func TestDeliveryCanonicalAndReply(t *testing.T) {
-	for _, kind := range []string{"text", "photo document", "album", "document", "long caption", "late failure"} {
+	for _, kind := range []string{"text", "photo document", "album", "document", "long caption", "late failure", "late 404"} {
 		t.Run(kind, func(t *testing.T) {
 			calls := 0
 			var methods []string
@@ -54,9 +55,13 @@ func TestDeliveryCanonicalAndReply(t *testing.T) {
 				if reply.MessageID != 77 || !reply.AllowSendingWithoutReply {
 					t.Error("incorrect reply target")
 				}
-				if kind == "late failure" && calls == 2 {
-					writer.WriteHeader(500)
-					writeFixture(t, writer, `{"ok":false,"error_code":500}`)
+				if (kind == "late failure" || kind == "late 404") && calls == 2 {
+					status := 500
+					if kind == "late 404" {
+						status = 404
+					}
+					writer.WriteHeader(status)
+					writeFixture(t, writer, fmt.Sprintf(`{"ok":false,"error_code":%d}`, status))
 					return
 				}
 				identifier := 100 + calls
@@ -75,7 +80,7 @@ func TestDeliveryCanonicalAndReply(t *testing.T) {
 			photo := MediaSource{Kind: "photo", URL: server.URL + "/file", Name: "photo.jpg"}
 			document := MediaSource{Kind: "document", URL: server.URL + "/file", Name: "doc.txt"}
 			switch kind {
-			case "photo document", "late failure":
+			case "photo document", "late failure", "late 404":
 				message.Media = []MediaSource{photo, document}
 			case "album":
 				message.Media = []MediaSource{photo, photo}
@@ -85,9 +90,10 @@ func TestDeliveryCanonicalAndReply(t *testing.T) {
 				message.Media = []MediaSource{photo}
 				message.Text = strings.Repeat("x", 6000)
 			}
-			identifier, err := deliverMessage(t.Context(), client, server.Client(), t.TempDir(), message)
-			if kind == "late failure" {
-				if err == nil || identifier != 0 {
+			relay := Relay{telegram: client, mediaHTTP: server.Client(), tempRoot: t.TempDir()}
+			identifier, err := relay.deliverWithMediaRetry(t.Context(), &message)
+			if kind == "late failure" || kind == "late 404" {
+				if err == nil || identifier != 0 || calls != 2 {
 					t.Fatal("failed multi-part send returned canonical success")
 				}
 				return
@@ -265,6 +271,198 @@ func TestMediaDownloadCancellation(t *testing.T) {
 	entries, err := os.ReadDir(directory)
 	if err != nil || len(entries) != 0 {
 		t.Fatal("cancellation leaked files")
+	}
+}
+
+type cancelMediaRetryWriter struct{ cancel context.CancelFunc }
+
+func (writer cancelMediaRetryWriter) Write(data []byte) (int, error) {
+	writer.cancel()
+	return len(data), nil
+}
+
+func TestMediaRefreshFailureBoundaries(t *testing.T) {
+	for _, testCase := range []struct {
+		name                               string
+		status, vkCode, downloads, refresh int
+		cancel                             bool
+		refreshChange                      string
+	}{
+		{name: "404 exhausted", status: 404, downloads: 4, refresh: 3},
+		{name: "403 exhausted", status: 403, downloads: 4, refresh: 3},
+		{name: "400 not retried", status: 400, downloads: 1},
+		{name: "VK flood 9", status: 404, vkCode: 9, downloads: 1, refresh: 1},
+		{name: "VK flood 29", status: 404, vkCode: 29, downloads: 1, refresh: 1},
+		{name: "cancel backoff", status: 404, downloads: 1, cancel: true},
+		{name: "wrong peer on refresh", status: 404, downloads: 1, refresh: 1, refreshChange: "peer"},
+		{name: "blocked sender on refresh", status: 404, downloads: 1, refresh: 1, refreshChange: "sender"},
+		{name: "removed attachment", status: 404, downloads: 1, refresh: 1, refreshChange: "empty"},
+		{name: "changed attachment type", status: 404, downloads: 1, refresh: 1, refreshChange: "type"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			downloads, refresh, sends := 0, 0, 0
+			var server *httptest.Server
+			server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/file":
+					downloads++
+					writer.WriteHeader(testCase.status)
+				case "/messages.getById":
+					refresh++
+					if testCase.vkCode != 0 {
+						writeFixture(t, writer, fmt.Sprintf(`{"error":{"error_code":%d}}`, testCase.vkCode))
+						return
+					}
+					message := map[string]any{
+						"id": 99, "peer_id": 2000000001, "from_id": 42, "out": 1,
+						"attachments": []any{map[string]any{"type": "photo", "photo": map[string]any{"sizes": []any{map[string]any{"url": server.URL + "/file", "width": 100, "height": 100}}}}},
+					}
+					switch testCase.refreshChange {
+					case "peer":
+						message["peer_id"] = 2000000002
+					case "sender":
+						message["from_id"] = 73
+					case "empty":
+						message["attachments"] = []any{}
+					case "type":
+						message["attachments"] = []any{map[string]any{"type": "doc", "doc": map[string]any{"url": server.URL + "/file", "title": "file"}}}
+					}
+					if err := json.NewEncoder(writer).Encode(map[string]any{"response": map[string]any{"items": []any{message}}}); err != nil {
+						t.Error(err)
+					}
+				default:
+					sends++
+					t.Error("unexpected request after failed media download")
+					writer.WriteHeader(400)
+				}
+			}))
+			defer server.Close()
+			config := Config{VKAccessToken: "fake-token", VKTargetPeerID: 2000000001, VKBlockedSenderIDs: map[int64]struct{}{73: {}}}
+			vk, err := NewVKClient(config, server.URL, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clock := &fakeVKClock{now: time.Unix(1_900_000_000, 0)}
+			vk.rate.clock, vk.rate.minimum = clock, vkAPIMinInterval
+			store := testMessageStore(t)
+			if err := vk.ConfigureRateProtection(ctx, store, slog.New(slog.DiscardHandler)); err != nil {
+				t.Fatal(err)
+			}
+			logger := slog.New(slog.DiscardHandler)
+			if testCase.cancel {
+				logger = slog.New(slog.NewTextHandler(cancelMediaRetryWriter{cancel: cancel}, nil))
+			}
+			directory := t.TempDir()
+			relay := Relay{config: config, vk: vk, store: store, mediaHTTP: server.Client(), tempRoot: directory, logger: logger, retryDelay: time.Millisecond}
+			err = relay.deliverMapped(ctx, RenderedMessage{VKMessageID: 99, Name: "Sender", Text: "text", Media: []MediaSource{{Kind: "photo", URL: server.URL + "/file", Name: "photo.jpg"}}})
+			if err == nil || downloads != testCase.downloads || refresh != testCase.refresh || sends != 0 {
+				t.Fatalf("downloads=%d refresh=%d sends=%d err=%v", downloads, refresh, sends, err)
+			}
+			if testCase.cancel && !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected cancellation: %v", err)
+			}
+			if testCase.vkCode != 0 {
+				var apiError *VKAPIError
+				if !errors.As(err, &apiError) || apiError.Code != testCase.vkCode {
+					t.Fatalf("flood error not preserved: %v", err)
+				}
+				until, _, err := store.LoadVKRateState(t.Context())
+				if err != nil || !until.After(clock.Now()) {
+					t.Fatal("refresh bypassed persisted VK cooldown")
+				}
+			}
+			if testCase.refresh > 1 && len(clock.waits) == 0 {
+				t.Fatal("refresh calls bypassed VK pacing")
+			}
+			mapping, err := store.Lookup(t.Context(), 99)
+			if err != nil || mapping != 0 {
+				t.Fatal("failed media saved a mapping")
+			}
+			entries, err := os.ReadDir(directory)
+			if err != nil || len(entries) != 0 {
+				t.Fatal("media retries leaked temporary files")
+			}
+		})
+	}
+}
+
+func TestMediaRefreshAlbum(t *testing.T) {
+	downloads := make(map[string]int)
+	refresh, sends := 0, 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/first", "/expired", "/fresh":
+			downloads[request.URL.Path]++
+			if request.URL.Path == "/expired" {
+				writer.WriteHeader(404)
+				return
+			}
+			writeFixture(t, writer, "photo-bytes")
+		case "/messages.getById":
+			refresh++
+			if sends != 0 {
+				t.Error("album was partially sent before media refresh")
+			}
+			writeFixture(t, writer, fmt.Sprintf(`{"response":{"items":[{"id":99,"peer_id":2000000001,"from_id":42,"out":1,"text":"edited text","attachments":[{"type":"photo","photo":{"sizes":[{"url":%q,"width":100,"height":100}]}},{"type":"photo","photo":{"sizes":[{"url":%q,"width":100,"height":100}]}}]}]}}`, server.URL+"/first", server.URL+"/fresh"))
+		case "/botfake-token/sendMediaGroup":
+			sends++
+			if err := request.ParseMultipartForm(1 << 20); err != nil {
+				t.Error(err)
+				return
+			}
+			defer request.MultipartForm.RemoveAll()
+			var reply TelegramReplyParameters
+			var album []struct {
+				Caption string `json:"caption"`
+			}
+			if json.Unmarshal([]byte(request.FormValue("reply_parameters")), &reply) != nil || reply.MessageID != 77 {
+				t.Error("album retry lost original reply")
+			}
+			if json.Unmarshal([]byte(request.FormValue("media")), &album) != nil || len(album) != 2 || !strings.Contains(album[0].Caption, "original text") || strings.Contains(album[0].Caption, "edited text") {
+				t.Error("album retry lost original caption or media")
+			}
+			writeFixture(t, writer, `{"ok":true,"result":[{"message_id":201},{"message_id":202}]}`)
+		default:
+			t.Error("unexpected request during album retry")
+			writer.WriteHeader(400)
+		}
+	}))
+	defer server.Close()
+	config := Config{VKAccessToken: "fake-token", VKTargetPeerID: 2000000001, TelegramBotToken: "fake-token", TelegramTargetChatID: -123}
+	vk, err := NewVKClient(config, server.URL, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	telegram, err := newTestTelegramClient(config, server.URL, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := testMessageStore(t)
+	if err := store.Save(t.Context(), 98, 77); err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	relay := Relay{config: config, vk: vk, telegram: telegram, store: store, mediaHTTP: server.Client(), tempRoot: directory, logger: slog.New(slog.DiscardHandler), retryDelay: time.Millisecond}
+	message := RenderedMessage{VKMessageID: 99, VKReplyToID: 98, Name: "Sender", Text: "original text", Media: []MediaSource{
+		{Kind: "photo", URL: server.URL + "/first", Name: "first.jpg"},
+		{Kind: "photo", URL: server.URL + "/expired", Name: "second.jpg"},
+	}}
+	if err := relay.deliverMapped(t.Context(), message); err != nil {
+		t.Fatal(err)
+	}
+	if refresh != 1 || sends != 1 || downloads["/first"] != 2 || downloads["/expired"] != 1 || downloads["/fresh"] != 1 {
+		t.Fatalf("refresh=%d sends=%d downloads=%v", refresh, sends, downloads)
+	}
+	mapping, err := store.Lookup(t.Context(), 99)
+	if err != nil || mapping != 201 {
+		t.Fatal("album retry did not save its canonical mapping")
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("album retry leaked temporary files")
 	}
 }
 

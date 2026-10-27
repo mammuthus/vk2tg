@@ -21,6 +21,14 @@ type localMedia struct {
 	Path string
 }
 
+type mediaHTTPError struct {
+	StatusCode int
+}
+
+func (failure *mediaHTTPError) Error() string {
+	return fmt.Sprintf("media HTTP status %d", failure.StatusCode)
+}
+
 func deliverMessage(ctx context.Context, telegram *TelegramClient, mediaHTTP *http.Client, tempRoot string, message RenderedMessage) (canonical int64, result error) {
 	limit := 4096
 	if len(message.Media) > 0 {
@@ -139,7 +147,7 @@ func downloadAttempt(ctx context.Context, client *http.Client, address, path str
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		trace(ctx, "media HTTP response", "http_status", response.StatusCode)
-		return response.StatusCode == 429 || response.StatusCode >= 500, fmt.Errorf("media HTTP status %d", response.StatusCode)
+		return response.StatusCode == 429 || response.StatusCode >= 500, &mediaHTTPError{StatusCode: response.StatusCode}
 	}
 	if response.ContentLength > maximum {
 		return false, errors.New("media exceeds upload size limit")

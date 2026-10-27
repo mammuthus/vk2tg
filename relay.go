@@ -218,7 +218,7 @@ func (relay *Relay) deliverMapped(ctx context.Context, message RenderedMessage) 
 		}
 	}
 	trace(ctx, "reply mapping resolved", "reply_vk_id", message.VKReplyToID, "reply_telegram_id", message.TelegramReplyID)
-	canonical, err := deliverMessage(ctx, relay.telegram, relay.mediaHTTP, relay.tempRoot, message)
+	canonical, err := relay.deliverWithMediaRetry(ctx, &message)
 	if err != nil {
 		traceFailure(ctx, "delivery", err)
 		return err
@@ -244,6 +244,49 @@ func (relay *Relay) deliverMapped(ctx context.Context, message RenderedMessage) 
 		}
 	}
 	return nil
+}
+
+func (relay *Relay) deliverWithMediaRetry(ctx context.Context, message *RenderedMessage) (int64, error) {
+	for attempt := 0; ; attempt++ {
+		canonical, err := deliverMessage(ctx, relay.telegram, relay.mediaHTTP, relay.tempRoot, *message)
+		var mediaError *mediaHTTPError
+		if !errors.As(err, &mediaError) || (mediaError.StatusCode != http.StatusForbidden && mediaError.StatusCode != http.StatusNotFound) || attempt >= 3 {
+			return canonical, err
+		}
+		delay := relay.retryDelay
+		if delay <= 0 {
+			delay = 2 * time.Second
+		}
+		delay <<= attempt
+		trace(ctx, "media URL refresh scheduled", "http_status", mediaError.StatusCode, "attempt", attempt+1, "delay", delay)
+		relay.logger.WarnContext(ctx, "media unavailable; refreshing before retry", "vk_message_id", message.VKMessageID, "http_status", mediaError.StatusCode, "attempt", attempt+1, "delay", delay)
+		if err := pause(ctx, delay); err != nil {
+			return 0, err
+		}
+		fresh, err := relay.vk.GetMessageByID(ctx, message.VKMessageID)
+		if err != nil {
+			return 0, err
+		}
+		if !relay.acceptsContext(ctx, fresh) {
+			return 0, errors.New("media refresh rejected by message filters")
+		}
+		if err := relay.vk.enrichStickers(ctx, fresh); err != nil {
+			return 0, err
+		}
+		refreshed, err := normalizeMessage(fresh, message.Name)
+		if err != nil {
+			return 0, err
+		}
+		if len(refreshed.Media) != len(message.Media) {
+			return 0, errors.New("media attachments changed during URL refresh")
+		}
+		for index := range message.Media {
+			if refreshed.Media[index].Kind != message.Media[index].Kind {
+				return 0, errors.New("media attachments changed during URL refresh")
+			}
+		}
+		message.Media = refreshed.Media
+	}
 }
 
 func (relay *Relay) prepareMessage(ctx context.Context, message VKMessage) (RenderedMessage, bool, error) {
