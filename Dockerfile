@@ -3,7 +3,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
-COPY plugins/*.go ./plugins/
+COPY plugins/ ./plugins/
 COPY internal/pluginruntime/plugin_*.go ./internal/pluginruntime/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/vk2tg .
 

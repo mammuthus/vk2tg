@@ -2,7 +2,7 @@
 
 The optional `metrics` plugin exposes `GET /metrics` in Prometheus text format
 and supports OpenMetrics negotiation. Its implementation is in
-[`plugins/metrics.go`](../plugins/metrics.go), using the official
+[`metrics.go`](metrics.go), using the official
 [Prometheus Go client](https://github.com/prometheus/client_golang).
 
 It observes successful live deliveries, stores counters in memory, and uses no
@@ -22,7 +22,7 @@ For a directly launched binary, export these variables before starting it.
 `METRICS_LISTEN_ADDR` defaults to `127.0.0.1:9091` and is only read when this plugin
 initializes. No listener is opened while `metrics` is disabled.
 
-For Docker, the optional [`compose.metrics.yaml`](../compose.metrics.yaml)
+For Docker, this directory's optional [`compose.yaml`](compose.yaml)
 overlay sets the **container** listener to `0.0.0.0:9091` and publishes it only on
 **host** `127.0.0.1:9091` by default. Set `METRICS_HOST_PORT` in `.env` to use
 another host port (and use that port in curl and Prometheus targets). The overlay
@@ -30,11 +30,12 @@ overrides `METRICS_LISTEN_ADDR` from `.env`. Apply it
 when an update of the live service is intended:
 
 ```sh
-docker compose -f compose.yaml -f compose.metrics.yaml up -d --build --no-deps vk2tg
+docker compose -f compose.yaml -f plugins/metrics/compose.yaml up -d --build --no-deps vk2tg
 curl --fail http://127.0.0.1:9091/metrics
 ```
 
-Use the same pair of Compose files for subsequent updates. Do not start a second
+Run these commands from the repository root and use the same pair of Compose
+files for subsequent updates. Do not start a second
 relay process. To disable the plugin, remove `metrics` from `PLUGINS` and recreate
 the container; to also remove port publication, use only the base Compose file.
 Base Compose continues to publish no ports.
@@ -88,10 +89,10 @@ as-is; configure a reachable private container network or host address explicitl
 The endpoint has no authentication. Prometheus/Grafana deployment and network
 exposure beyond host loopback are separate configuration tasks.
 
-Local tests in `tests/plugins/metrics_test.go` (ignored by Git) use synthetic
+[Unit tests](metrics_test.go) are versioned beside the implementation and use synthetic
 events and local ephemeral listeners. They validate exposition, counts, bounded
 labels, concurrent scrapes, lifecycle, startup failure isolation and disabled
 operation without sending messages to Telegram.
 
-Run the full suite with `./scripts/test.sh test ./...`; see [Plugins](plugins.md)
-for the source/test layout.
+Run `go test ./plugins/metrics` or the full suite with `go test ./...` from the
+repository root; see [Plugins](../../docs/plugins.md) for the source/test layout.

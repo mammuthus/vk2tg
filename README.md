@@ -59,7 +59,7 @@ SQLite at `/data/state.db`, restarts with `unless-stopped`, and rotates Docker
   SQLite, rate protection, debug/privacy, deployment and health checks.
 - [Plugins](docs/plugins.md): registration, local-only files, configuration,
   lifecycle and delivery guarantees.
-- [Metrics](docs/metrics.md): optional `/metrics`, Docker access and Prometheus setup.
+- [Metrics](plugins/metrics/README.md): optional `/metrics`, Docker access and Prometheus setup.
 - [History](docs/history.md): `test-history --count N` versus `migrate-history`,
   pagination, backups, resume and failure handling.
 
@@ -70,18 +70,20 @@ reconciliation rather than automatically resending them.
 ## Development
 
 Tests use mock HTTP APIs and temporary SQLite databases, not live accounts.
-`plugins/` contains only plugin implementations; their runtime lives in
-`internal/pluginruntime/plugin_*.go`. Plugin/runtime unit tests live in the local,
-Git-ignored `tests/` directory. `scripts/test.sh` runs the complete suite in a
-temporary workspace; it requires these local tests. A fresh checkout can still
-run the core tests with `go test ./...` and build without `tests/`.
-For the complete local checks:
+Each plugin owns its code, tests, README and optional Compose overlay in
+`plugins/<name>/`. Shared runtime code and tests live in `internal/pluginruntime`;
+shared test helpers live in `internal/plugintest`. Public tests are versioned and
+run directly in a fresh checkout. Private plugin directories and their local
+registration imports remain excluded from Git.
 
 ```sh
-gofmt -l *.go plugins/*.go internal/pluginruntime/*.go tests/plugins/*.go tests/pluginruntime/*.go
-./scripts/test.sh test ./...
-./scripts/test.sh test -race ./...
-./scripts/test.sh vet ./...
+gofmt -l *.go plugins internal
+go test ./...
+go test -race ./...
+go vet ./...
 go build -o /tmp/vk2tg-check .
 git diff --check
 ```
+
+`scripts/test.sh` remains a compatibility wrapper around `go test`/`go vet`;
+it no longer copies tests or requires files outside the checkout.

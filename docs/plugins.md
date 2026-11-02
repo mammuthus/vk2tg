@@ -4,24 +4,29 @@ Plugins observe successfully relayed **live** messages. They do not filter,
 modify, or cancel Telegram delivery. An empty `PLUGINS` (the default) starts no
 workers. History commands and dry-run never start observers or enqueue events.
 The repository includes the diagnostic `example` observer and a
-[Prometheus-compatible `metrics` observer](metrics.md).
+[Prometheus-compatible `metrics` observer](../plugins/metrics/README.md).
 
 ## Source layout
 
-- `plugins/example.go`, `plugins/metrics.go`: concrete observers only.
+- `plugins/register.go`: imports the public plugin packages for registration.
+- `plugins/example/`: example implementation, unit tests and README.
+- `plugins/metrics/`: metrics implementation, unit tests, README and `compose.yaml`.
 - `internal/pluginruntime/plugin_api.go`: event contract and registration.
 - `internal/pluginruntime/plugin_manager.go`: lifecycle and memory delivery.
 - `internal/pluginruntime/plugin_queue.go`: optional SQLite delivery.
-- `tests/plugins/`, `tests/pluginruntime/`: local unit tests, excluded from Git
-  and Docker builds. Keep a separate backup; these tests are not in a fresh clone.
+- `internal/pluginruntime/plugin_manager_test.go`: runtime regression tests.
+- `internal/plugintest/`: shared helpers imported only by plugin tests.
 
 The executable imports `plugins` for registration. Implementations import the
-runtime package; the runtime has no dependency on concrete plugins. Core bot
-integration tests remain beside the root application files.
+runtime package; the runtime has no dependency on concrete plugins. Each plugin
+has its own Go package. Core bot integration tests remain beside the root
+application files. All public tests are versioned alongside their packages.
 
 ## Adding and enabling an observer
 
-Add a Go file in `plugins/`, with `package plugins`. Register a factory from
+Create `plugins/myplugin/` with `package myplugin`. Keep implementation, unit
+tests, README, example configuration and any Compose overlay in that directory.
+Register a factory from
 `init()` using `pluginruntime.Register("myplugin", factory)`. Import
 `github.com/mammuthus/vk2tg/internal/pluginruntime`; the factory returns a
 `pluginruntime.Handler`:
@@ -35,6 +40,9 @@ func init() {
 
 // myPlugin implements Handle(context.Context, pluginruntime.Event) error.
 ```
+
+Add a blank import of `github.com/mammuthus/vk2tg/plugins/myplugin` to
+`plugins/register.go` so the executable links and registers the package.
 
 `pluginruntime.Register` selects a memory queue; no plugin SQLite database is
 opened. To opt into persistent delivery and retries, use
@@ -70,26 +78,29 @@ call. Cleanup has a fresh context capped at five seconds. Implementations must
 honor cancellation. Code changes require rebuilding; environment changes
 require recreating the container. There is no runtime `.go`/`.so` loader.
 
-For a personal implementation, use `plugins/local_<name>.go`, excluded by
-`.gitignore`. Put its tests in `tests/plugins/local_<name>_test.go`; all of
-`tests/` is ignored. Keep `plugins/` free of test and runtime files. For other
-filenames, add their exact paths to `.git/info/exclude` before creating them. Verify with
-`git check-ignore -v plugins/local_<name>.go`. Ignoring does not untrack committed
-files or prevent `git add -f`; inspect staged changes before publishing and back
-up private files separately. Docker includes `plugins/*.go`, even ignored files:
-only publish images built from public source if personal code must stay private.
+For a personal implementation, first exclude `/plugins/myplugin/` in
+`.git/info/exclude`. Keep all its files, including tests and configuration,
+inside that directory. Import it from `plugins/local_myplugin.go` with
+`package plugins`; the `local_*.go` registration bridges are ignored by
+`.gitignore`. Do not add a private import to the public `register.go`.
+
+Verify both exclusions with `git check-ignore -v plugins/myplugin/myplugin.go
+plugins/local_myplugin.go`. Ignoring does not untrack committed files or prevent
+`git add -f`; inspect changes before publishing and back up private files
+separately. Docker builds include nested plugin Go source, including ignored
+implementations, but exclude tests, documentation and configuration directories.
+Only publish images built from public source if personal code must stay private.
+
+Compose commands must run from the repository root with the base file first:
+`docker compose -f compose.yaml -f plugins/myplugin/compose.yaml ...`.
+Relative bind paths in overlays are resolved against that base project, not the
+plugin directory. Preserve all overlays already used by the deployment.
 
 ## Example
 
-[`plugins/example.go`](../plugins/example.go) demonstrates registration, `Init`,
-`Handle`, and `Close`. Enable it with `PLUGINS=example`, then recreate the service
-with `docker compose up -d --build vk2tg`. Leave `PLUGINS` empty to disable it.
-
-It logs lifecycle records and `example plugin received event` with
-`event_version`, `text_length` (Unicode code points), and `attachments_count`.
-It makes no network requests, creates no files, and uses the memory queue.
-The local `tests/plugins/example_test.go` tests synthetic events,
-safe JSON logs and cancellation without sending real Telegram messages.
+The [example plugin](../plugins/example/README.md) demonstrates registration,
+`Init`, `Handle`, and `Close`. Its implementation and tests are kept together;
+it needs no separate Compose overlay.
 
 ## Events and memory delivery
 
@@ -142,16 +153,13 @@ Existing queue files are left untouched when only memory observers are enabled.
 
 ## Checks
 
-Run `./scripts/test.sh test ./...`, `./scripts/test.sh test -race ./...`,
-`./scripts/test.sh vet ./...`, and the normal `go build` command. The runner
-copies Go source and local test files into a temporary workspace, placing tests
-beside their packages as Go requires. It does not copy `.env`, production state
-or `.git`, and removes its temporary files afterwards. No runtime API needs to
-be exposed solely for testing. The ignored `tests/go.mod` prevents Go from
-mistaking the stored test files for standalone packages.
+Run `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build .`
+directly from the repository root. The optional `scripts/test.sh` wrapper
+delegates to the same commands without copying files. A public checkout includes
+core, runtime and public plugin tests. Local private packages are also tested
+when present, without requiring them in a public checkout.
 
-`go test ./...` directly in the repository still runs core tests, but excludes
-local plugin/runtime suites. The runner fails clearly if local suites are
-missing. Tests use mock APIs and temporary databases. They cover memory delivery,
-overflow, event isolation, lifecycle services, failures, optional persistence,
-retries, restart recovery and exclusion from history/dry-run modes.
+Tests use mock APIs and temporary databases. They cover memory delivery,
+overflow, event isolation, lifecycle, failures, optional persistence, retries,
+restart recovery and exclusion from history/dry-run modes. Docker excludes
+`*_test.go`; test helpers are not imported by the production binary.

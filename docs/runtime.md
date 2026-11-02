@@ -20,7 +20,7 @@ values are required even in dry-run mode. IDs are nonzero signed decimal int64s.
 | `PLUGINS` | No | Empty; comma-separated names of compiled-in observers, live delivery only |
 | `PLUGIN_TIMEOUT_SECONDS` | No | `10`; plugin lifecycle/handler timeout, 1–60 seconds |
 | `METRICS_LISTEN_ADDR` | No | `127.0.0.1:9091`; only used by the enabled `metrics` observer |
-| `METRICS_HOST_PORT` | No | `9091`; localhost host port in `compose.metrics.yaml` |
+| `METRICS_HOST_PORT` | No | `9091`; localhost host port in `plugins/metrics/compose.yaml` |
 
 Keep credentials private; use [.env.example](../.env.example) as the template.
 Never enable shell tracing or publish resolved Compose environments. Dry-run
@@ -100,7 +100,7 @@ current events. Downtime or cursor expiration can lose events. Telegram sends
 and SQLite commits are not atomic: a crash after acceptance can leave an
 unmapped send and cause duplication if replayed. There is no exactly-once
 guarantee. [Migration](history.md) adds a pending-delivery guard, not a durable
-live cursor. The optional [metrics observer](metrics.md) exposes `/metrics`;
+live cursor. The optional [metrics observer](../plugins/metrics/README.md) exposes `/metrics`;
 no health HTTP endpoint is implemented.
 
 ## Rate Protection
@@ -148,10 +148,10 @@ container `vk2tg-vk2tg-1`, image `vk2tg:local`, volume `vk2tg_state`. Effective
 settings are `DRY_RUN=false`, `DEBUG=true`, `STATE_DB_PATH=/data/state.db`.
 
 Preserve the complete list of Compose overlays, enabled observers and bind
-mounts used by the running deployment. Include `compose.metrics.yaml` when
+mounts used by the running deployment. Include `plugins/metrics/compose.yaml` when
 metrics are published, plus any private overlays. Commands below show the base
 deployment only; append the deployment's other `-f` files before the command.
-Back up private implementations, local tests and plugin data separately from Git.
+Back up private plugin directories and runtime data separately from Git.
 
 [compose.yaml](../compose.yaml) overrides `.env` for `DRY_RUN` and
 `STATE_DB_PATH`. It uses `unless-stopped` and `json-file` logs with `max-size=10m`,

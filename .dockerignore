@@ -4,10 +4,14 @@
 !go.sum
 !*.go
 !plugins/
-!plugins/*.go
+plugins/**
+!plugins/**/*.go
 !internal/
 !internal/pluginruntime/
 !internal/pluginruntime/plugin_*.go
+
+**/*_test.go
+plugins/**/config/
 
 # Private runtime data/config must not be traversed or sent as build context.
 homework-data/
